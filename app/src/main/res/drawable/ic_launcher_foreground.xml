@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One extruded keycap carrying the caret terminals use for Ctrl. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Extruded side, far end first. -->
+    <group android:translateX="3.85" android:translateY="4.90">
+        <path android:fillColor="#173C5E" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="3.30" android:translateY="4.20">
+        <path android:fillColor="#1B466D" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="2.75" android:translateY="3.50">
+        <path android:fillColor="#1F517C" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="2.20" android:translateY="2.80">
+        <path android:fillColor="#225C8B" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="1.65" android:translateY="2.10">
+        <path android:fillColor="#26669A" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="1.10" android:translateY="1.40">
+        <path android:fillColor="#2A70A9" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+    <group android:translateX="0.55" android:translateY="0.70">
+        <path android:fillColor="#2E7BB8" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+
+    <!-- Lit top edge. -->
+    <group android:translateX="-0.6" android:translateY="-0.8">
+        <path android:fillColor="#FFFFFF" android:fillAlpha="0.85" android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z" />
+    </group>
+
+    <!-- Face. -->
+    <path android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="34" android:startY="32"
+                android:endX="74" android:endY="72">
+                <item android:offset="0" android:color="#FFE6F4FF" />
+                <item android:offset="1" android:color="#FF5FB0F0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Caret. -->
+    <path
+        android:pathData="M45,58 L54,46 L63,58"
+        android:strokeColor="#173C5E"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

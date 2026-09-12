@@ -1,0 +1,8 @@
+<resources>
+    <!-- Same palette as the launcher icon: navy ground, ice-blue accent. -->
+    <color name="ground">#FF0B0D14</color>
+    <color name="surface">#FF1A1E2A</color>
+    <color name="white">#FFEEF3FA</color>
+    <color name="gray">#FFA7B0C2</color>
+    <color name="accent">#FF5FB0F0</color>
+</resources>

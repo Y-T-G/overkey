@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keycap silhouette with the caret cut out. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M43,32h22a9,9 0 0 1 9,9v22a9,9 0 0 1 -9,9h-22a9,9 0 0 1 -9,-9v-22a9,9 0 0 1 9,-9z M41,60 L54,43 L67,60 L61,60 L54,51 L47,60 Z" />
+</vector>
