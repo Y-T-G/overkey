@@ -119,6 +119,7 @@ class InjectorClient(private val context: Context) {
     private var out: OutputStream? = null
     private var lastAttempt = 0L
     private var lastRelaunch = 0L
+    private var relaunchPending = false
 
     @Volatile var connected = false
         private set
@@ -223,11 +224,16 @@ class InjectorClient(private val context: Context) {
                     close()
                     main.post { onVolumeKeys?.accept(0) }
                     // The injector went away (reboot, kill, update): bring it back, but not in a
-                    // loop if it cannot start.
-                    val now = SystemClock.uptimeMillis()
-                    if (now - lastRelaunch > RELAUNCH_MS) {
-                        lastRelaunch = now
-                        handler.postDelayed({ ensure(launch = true) }, 1000)
+                    // loop if it cannot start. An EOF inside the window after a launch is
+                    // usually that launch's own pkill; it still gets a try once the window is
+                    // over, in case it was not.
+                    if (!relaunchPending) {
+                        relaunchPending = true
+                        val wait = maxOf(1000L, lastRelaunch + RELAUNCH_MS - SystemClock.uptimeMillis())
+                        handler.postDelayed({
+                            relaunchPending = false
+                            ensure(launch = true)
+                        }, wait)
                     }
                 }
             }
