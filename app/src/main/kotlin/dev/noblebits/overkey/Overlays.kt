@@ -1,8 +1,10 @@
 package dev.noblebits.overkey
 
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
@@ -366,13 +368,15 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (add(v, lp)) aimView = v
     }
 
-    private var textPanel: View? = null
+    private var textPanel: Dialog? = null
 
     /**
      * The text lifted from under the finger, in a panel with Android's own selection: long
-     * press a word, drag the handles, COPY. The window takes focus so the selection works,
+     * press a word, drag the handles, Copy from the toolbar or COPY below. A Dialog rather
+     * than a view added to the window manager: the floating selection toolbar is an action
+     * mode, and only a DecorView starts one. The window takes focus so the selection works,
      * but tells the keyboard it has no use for it, so a keyboard that was up stays up behind.
-     * A touch outside closes it.
+     * A touch outside or Back closes it.
      */
     private fun showText(text: String) {
         closeText()
@@ -401,10 +405,9 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         }
         val buttons = LinearLayout(context).apply {
             gravity = Gravity.END
-            // The selection toolbar Android would offer needs a Window callback, which a
-            // view added straight to the window manager has not got; so a button. Ctrl+C
-            // from the bar works too: the panel holds focus, and a selectable TextView
-            // takes that shortcut itself.
+            // Besides the toolbar: COPY with nothing selected takes all of it. Ctrl+C from
+            // the bar works too; the panel holds focus, and a selectable TextView takes
+            // that shortcut itself.
             addView(button("COPY") {
                 val a = body.selectionStart
                 val b = body.selectionEnd
@@ -416,12 +419,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             })
             addView(button("CLOSE") { closeText() })
         }
-        val panel = object : LinearLayout(context) {
-            override fun onTouchEvent(e: MotionEvent): Boolean {
-                if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) closeText()
-                return super.onTouchEvent(e)
-            }
-        }.apply {
+        val panel = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(theme.bg)
@@ -431,24 +429,30 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             addView(scroll)
             addView(buttons)
         }
-        val lp = WindowManager.LayoutParams(
-            context.resources.displayMetrics.widthPixels - 2 * pad,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
-                WindowManager.LayoutParams.FLAG_DIM_BEHIND,
-            PixelFormat.TRANSLUCENT,
-        )
-        lp.dimAmount = 0.3f
-        lp.gravity = Gravity.CENTER
-        lp.windowAnimations = R.style.OverlayFade
-        if (add(panel, lp)) textPanel = panel
+        // The dialog theme only sets the selection toolbar and handles; the panel paints itself.
+        val night = (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val d = Dialog(context, if (night) android.R.style.Theme_DeviceDefault_Dialog_NoActionBar
+            else android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar)
+        d.setContentView(panel)
+        d.setCanceledOnTouchOutside(true)
+        d.setOnDismissListener { if (textPanel === d) textPanel = null }
+        val w = d.window ?: return
+        w.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        w.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        w.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+        w.setLayout(context.resources.displayMetrics.widthPixels - 2 * pad, WindowManager.LayoutParams.WRAP_CONTENT)
+        w.setDimAmount(0.3f)
+        w.setWindowAnimations(R.style.OverlayFade)
+        try {
+            d.show()
+            textPanel = d
+        } catch (_: WindowManager.BadTokenException) {
+            onLost.run()
+        }
     }
 
     private fun closeText() {
-        textPanel?.let { wm.removeView(it) }
+        textPanel?.dismiss()
         textPanel = null
     }
 
