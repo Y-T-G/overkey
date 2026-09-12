@@ -30,14 +30,15 @@ import javax.crypto.spec.SecretKeySpec
  *
  * Protocol: a mutual challenge-response over the shared token (see [handshake]), so the token
  * itself never crosses the socket and a process squatting the port learns nothing. Then one
- * text line per event: "action keycode metaState repeat", or "m x y button" for a mouse click.
+ * text line per event: "action keycode metaState repeat", or "m x y button" for a mouse click,
+ * or a drag as "d x y" (left button down there), "t x y" lines along the way and "u" (up).
  * The other way, the injector sends "v <mask>" whenever a volume key goes down or up, bit 0 for
  * Vol- and bit 1 for Vol+: root and shell can read /dev/input, the app cannot.
  */
 object Injector {
     const val PORT = 27301
     /** Bumped whenever the protocol changes; a running injector with another version is stale. */
-    const val VERSION = 3
+    const val VERSION = 4
     private const val NONCE = 16
     private const val MAC = 32
 
@@ -127,6 +128,7 @@ object Injector {
 
     private fun serve(s: Socket, token: String, im: Any, inject: java.lang.reflect.Method) {
         val downTimes = LongArray(KeyEvent.getMaxKeyCode() + 1)
+        val mouse = Mouse(im, inject)
         var out: java.io.OutputStream? = null
         try {
             s.tcpNoDelay = true
@@ -143,7 +145,19 @@ object Injector {
             while (true) {
                 val line = r.readLine() ?: break
                 if (line.startsWith("m ")) {
-                    if (parse(line.substring(2), p, 3)) click(p[0].toFloat(), p[1].toFloat(), p[2], im, inject)
+                    if (parse(line.substring(2), p, 3)) mouse.click(p[0].toFloat(), p[1].toFloat(), p[2])
+                    continue
+                }
+                if (line.startsWith("d ")) {
+                    if (parse(line.substring(2), p, 2)) mouse.press(p[0].toFloat(), p[1].toFloat())
+                    continue
+                }
+                if (line.startsWith("t ")) {
+                    if (parse(line.substring(2), p, 2)) mouse.move(p[0].toFloat(), p[1].toFloat())
+                    continue
+                }
+                if (line == "u") {
+                    mouse.release()
                     continue
                 }
                 if (!parse(line, p, 4)) continue
@@ -163,6 +177,7 @@ object Injector {
             // Not s.getOutputStream() here: on a closed socket that throws, and the close
             // below would be skipped.
             if (out != null) synchronized(clients) { clients.remove(out) }
+            try { mouse.release() } catch (_: Exception) {} // a client gone mid-drag leaves no button down
             try { s.close() } catch (_: Exception) {}
         }
     }
@@ -205,29 +220,61 @@ object Injector {
     }
 
     /**
-     * A desktop-style click: apps give a mouse press the focus and selection semantics of a
-     * real pointer (an image in a browser becomes the thing Ctrl+C copies), which a touch
-     * tap does not. Down with the button, a press, up, a release.
+     * One client's mouse. A desktop-style click gives apps the focus and selection semantics
+     * of a real pointer (an image in a browser becomes the thing Ctrl+C copies), which a
+     * touch tap does not. A click is down with the button, a press, a release, up; a drag
+     * keeps the button held across moves until the release.
      */
-    private fun click(x: Float, y: Float, button: Int, im: Any, inject: java.lang.reflect.Method) {
-        val state = if (button == 2) MotionEvent.BUTTON_SECONDARY else MotionEvent.BUTTON_PRIMARY
-        val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE })
-        val coords = arrayOf(MotionEvent.PointerCoords().apply { this.x = x; this.y = y; pressure = 1f; size = 1f })
-        val down = SystemClock.uptimeMillis()
+    private class Mouse(private val im: Any, private val inject: java.lang.reflect.Method) {
+        private val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE })
+        private val coords = arrayOf(MotionEvent.PointerCoords().apply { pressure = 1f; size = 1f })
         // setActionButton is hidden; this process is not subject to the hidden API list.
-        val setActionButton = MotionEvent::class.java.getMethod("setActionButton", Integer.TYPE)
-        fun send(action: Int, buttons: Int, actionButton: Int = 0) {
+        private val setActionButton = MotionEvent::class.java.getMethod("setActionButton", Integer.TYPE)
+        private var downTime = 0L
+        private var held = 0 // the button down for a drag in progress, else 0
+
+        fun click(x: Float, y: Float, button: Int) {
+            release()
+            val state = if (button == 2) MotionEvent.BUTTON_SECONDARY else MotionEvent.BUTTON_PRIMARY
+            press(x, y, state)
+            release()
+        }
+
+        fun press(x: Float, y: Float, state: Int = MotionEvent.BUTTON_PRIMARY) {
+            release()
+            coords[0].x = x
+            coords[0].y = y
+            downTime = SystemClock.uptimeMillis()
+            held = state
+            send(MotionEvent.ACTION_DOWN, state)
+            send(MotionEvent.ACTION_BUTTON_PRESS, state, state)
+            SystemClock.sleep(12)
+        }
+
+        /** Paced like a hand: an app that only sees the end points of a drag treats it as a click. */
+        fun move(x: Float, y: Float) {
+            if (held == 0) return
+            coords[0].x = x
+            coords[0].y = y
+            send(MotionEvent.ACTION_MOVE, held)
+            SystemClock.sleep(12)
+        }
+
+        fun release() {
+            if (held == 0) return
+            send(MotionEvent.ACTION_BUTTON_RELEASE, 0, held)
+            send(MotionEvent.ACTION_UP, 0)
+            held = 0
+        }
+
+        private fun send(action: Int, buttons: Int, actionButton: Int = 0) {
             // Device 0, as scrcpy does for pointers; the virtual keyboard id (-1) is refused here.
-            val ev = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, 1, props, coords, 0, buttons,
+            val ev = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1, props, coords, 0, buttons,
                 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0)
             if (actionButton != 0) setActionButton.invoke(ev, actionButton)
             inject.invoke(im, ev, 0)
             ev.recycle()
         }
-        send(MotionEvent.ACTION_DOWN, state)
-        send(MotionEvent.ACTION_BUTTON_PRESS, state, state)
-        send(MotionEvent.ACTION_BUTTON_RELEASE, 0, state)
-        send(MotionEvent.ACTION_UP, 0)
     }
 
     /** Parses [n] space-separated ints into [out]. Hand-rolled so R8 does not pull in Kotlin's split. */

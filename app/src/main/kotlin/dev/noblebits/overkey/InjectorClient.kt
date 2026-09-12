@@ -155,6 +155,17 @@ class InjectorClient(private val context: Context) {
     /** A mouse click at screen coordinates; [button] is 1 for primary, 2 for secondary. */
     fun click(x: Int, y: Int, button: Int) = write("m $x $y $button\n")
 
+    /**
+     * A left-button drag along [path], screen x,y pairs, first to last. Sent whole; the
+     * injector paces the moves.
+     */
+    fun drag(path: IntArray) {
+        if (path.size < 4) return
+        val sb = StringBuilder("d ${path[0]} ${path[1]}\n")
+        for (i in 2 until path.size step 2) sb.append("t ${path[i]} ${path[i + 1]}\n")
+        write(sb.append("u\n").toString())
+    }
+
     private fun write(line: String) {
         handler.post {
             val o = out ?: (if (connect()) out!! else return@post)

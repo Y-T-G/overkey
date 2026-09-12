@@ -5,6 +5,7 @@ import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -308,20 +309,29 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     private var aimView: View? = null
 
     /**
-     * Aim mode, from a long press on the grip: the whole screen takes the next tap and turns it
-     * into a mouse click at that spot through the injector (long press: right click). A touch
-     * tap cannot give a page element focus the way a pointer click does, which is what Ctrl+C
-     * on an image in a browser needs. Any swipe cancels.
+     * Aim mode, from a long press on the grip: the whole screen takes the next touch and turns
+     * it into a mouse gesture through the injector. A tap is a left click at that spot, a long
+     * press a right click, a drag a left-button drag along the same path, replayed once the
+     * finger lifts. A touch tap cannot give a page element focus the way a pointer click does,
+     * which is what Ctrl+C on an image in a browser needs; a touch drag scrolls where a mouse
+     * drag selects. A second finger cancels.
+     *
+     * Replayed rather than live because the finger is still down on this window: on Android
+     * before 14 the dispatcher allows one pointer device at a time, and a mouse DOWN injected
+     * mid-touch has the touch dropped.
      */
     private fun aim() {
         if (aimView != null) return
-        val v = AimView(context) { x, y, button ->
+        val v = AimView(context) { button, path ->
             aimView?.let { wm.removeView(it) }
             aimView = null
+            if (button == AimView.CANCEL) return@AimView
             // The window takes a frame or two to go; a click sent at once lands on it. Not
             // View.postDelayed: a detached view (the bar, while collapsed) holds the runnable
             // until it is attached again.
-            if (x >= 0) handler.postDelayed({ client.click(x, y, button) }, 150)
+            handler.postDelayed({
+                if (button == AimView.DRAG) client.drag(thin(path, 32)) else client.click(path[0], path[1], button)
+            }, 150)
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -336,44 +346,83 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (add(v, lp)) aimView = v
     }
 
-    /** Full-screen tint that reports one tap or long press, or -1 when swiped away. */
-    private class AimView(context: Context, private val done: (Int, Int, Int) -> Unit) : View(context) {
+    /** At most [n] of the x,y pairs in [path], evenly spaced, the first and last kept. */
+    private fun thin(path: IntArray, n: Int): IntArray {
+        val pairs = path.size / 2
+        if (pairs <= n) return path
+        val out = IntArray(n * 2)
+        for (i in 0 until n) {
+            val j = i * (pairs - 1) / (n - 1)
+            out[2 * i] = path[2 * j]
+            out[2 * i + 1] = path[2 * j + 1]
+        }
+        return out
+    }
+
+    /**
+     * Full-screen tint that reports one gesture: [done] gets the button ([LEFT], [RIGHT],
+     * [DRAG] or [CANCEL]) and the touched screen points as x,y pairs, first to last. A drag
+     * draws its trail so the finger can see where the pointer will go.
+     */
+    private class AimView(context: Context, private val done: (Int, IntArray) -> Unit) : View(context) {
         private val tint = Paint().apply { color = 0x30000000 }
+        private val ink = Paint().apply {
+            color = 0xC0FFFFFF.toInt()
+            style = Paint.Style.STROKE
+            strokeWidth = 3 * context.resources.displayMetrics.density
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            isAntiAlias = true
+        }
         private val slop = ViewConfiguration.get(context).scaledTouchSlop
-        private var x0 = 0f
-        private var y0 = 0f
+        private val points = ArrayList<Int>()
+        private val trail = Path()
         private var moved = false
-        private var fired = false
+        private var over = false // reported; the rest of this gesture is nobody's
         private val hold = Runnable {
-            fired = true
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            done(x0.toInt(), y0.toInt(), 2)
+            finish(RIGHT)
+        }
+
+        private fun finish(button: Int) {
+            if (over) return
+            over = true
+            removeCallbacks(hold)
+            done(button, points.toIntArray())
         }
 
         override fun onDraw(canvas: Canvas) {
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tint)
+            if (moved) canvas.drawPath(trail, ink)
         }
 
         override fun onTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    x0 = e.rawX
-                    y0 = e.rawY
+                    points.clear()
+                    points.add(e.rawX.toInt())
+                    points.add(e.rawY.toInt())
+                    trail.reset()
+                    trail.moveTo(e.x, e.y)
                     moved = false
-                    fired = false
+                    over = false
                     postDelayed(hold, 500)
                 }
-                MotionEvent.ACTION_MOVE -> if (!moved && (Math.abs(e.rawX - x0) > slop || Math.abs(e.rawY - y0) > slop)) {
-                    moved = true
-                    removeCallbacks(hold)
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    removeCallbacks(hold)
-                    if (!fired) {
-                        if (moved || e.actionMasked == MotionEvent.ACTION_CANCEL) done(-1, -1, 0)
-                        else done(x0.toInt(), y0.toInt(), 1)
+                MotionEvent.ACTION_POINTER_DOWN -> finish(CANCEL)
+                MotionEvent.ACTION_MOVE -> if (!over) {
+                    if (!moved && (Math.abs(e.rawX - points[0]) > slop || Math.abs(e.rawY - points[1]) > slop)) {
+                        moved = true
+                        removeCallbacks(hold)
+                    }
+                    if (moved) {
+                        points.add(e.rawX.toInt())
+                        points.add(e.rawY.toInt())
+                        trail.lineTo(e.x, e.y)
+                        invalidate()
                     }
                 }
+                MotionEvent.ACTION_UP -> finish(if (moved) DRAG else LEFT)
+                MotionEvent.ACTION_CANCEL -> finish(CANCEL)
             }
             return true
         }
@@ -381,6 +430,13 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         override fun onDetachedFromWindow() {
             removeCallbacks(hold)
             super.onDetachedFromWindow()
+        }
+
+        companion object {
+            const val CANCEL = 0
+            const val LEFT = 1
+            const val RIGHT = 2
+            const val DRAG = 3
         }
     }
 
