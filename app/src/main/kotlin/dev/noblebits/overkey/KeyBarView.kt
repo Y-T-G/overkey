@@ -224,17 +224,17 @@ class KeyBarView(
     override fun onDraw(canvas: Canvas) {
         if (collapsed) {
             // A capsule smaller than the window, so the touch target is generous without looking
-            // it, on the same plinth as the settings cards: a wall pushed along the light vector,
-            // a lit rim on the top-left edge, the handle in the accent.
+            // it, set in an even accent-tinted surround so it can be found against a dark
+            // keyboard, a faint rim, the handle in the accent. Even on every side: the bar sits
+            // anywhere on the screen, and a wall pushed one way reads as a slant.
             val cw = 64 * density
             val ch = 20 * density
             val l = (width - cw) / 2
-            val t = (height - ch) / 2 - 1.5f * density
+            val t = (height - ch) / 2
             val lift = 1.5f * density
             val r = ch / 2
             fill.color = WordmarkView.blend(theme.bg, theme.accent, 0.2f)
-            canvas.drawRoundRect(l + WordmarkView.LIGHT_X * lift, t + WordmarkView.LIGHT_Y * lift,
-                l + cw + WordmarkView.LIGHT_X * lift, t + ch + WordmarkView.LIGHT_Y * lift, r, r, fill)
+            canvas.drawRoundRect(l - lift, t - lift, l + cw + lift, t + ch + lift, r + lift, r + lift, fill)
             fill.color = (theme.bg and 0xFFFFFF) or (bgAlpha shl 24)
             canvas.drawRoundRect(l, t, l + cw, t + ch, r, r, fill)
             border.color = (theme.fg and 0xFFFFFF) or 0x1C000000
