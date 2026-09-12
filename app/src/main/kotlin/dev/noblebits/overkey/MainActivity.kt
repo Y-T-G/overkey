@@ -211,7 +211,7 @@ class MainActivity : Activity() {
             "copies whole. Copy image puts the picture under your finger on the clipboard as it " +
             "appears on screen. A second finger cancels.")
         help("The notification", "Pin puts the bar up with no keyboard, for Ctrl+Z or the arrows " +
-            "on a screen with no text field; the grid stacks above it. Hide takes everything off " +
+            "on a screen with no text field; the grid stacks on it, above or below as fits. Hide takes everything off " +
             "the screen while the volume keys keep working.")
 
         setContentView(ScrollView(this).apply {

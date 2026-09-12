@@ -354,9 +354,13 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             chordLp.width = maxOf(r.width() - grid[2] + grid[3], MIN_PX)
             chordLp.height = maxOf(r.height() - grid[0] + grid[1], MIN_PX)
         } else {
+            // Stacked on the bar; under it when the bar sits too high for the grid to fit
+            // above, which a pill dragged near the top does.
             val h = (GRID_ROW_DP * KeyBarView.CHORD.size * density).toInt()
+            val statusBottom = wm.currentWindowMetrics.windowInsets
+                .getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
             chordLp.x = r.left
-            chordLp.y = barTop() - h
+            chordLp.y = if (barTop() - h >= statusBottom) barTop() - h else barTop() + barHeight()
             chordLp.width = r.width()
             chordLp.height = h
         }
