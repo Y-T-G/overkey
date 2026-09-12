@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var command: TextView
     private lateinit var calibrateField: EditText
     private var regaining = false
+    private var sentAway = false
     private var dp = 1f
 
     private val white get() = getColor(R.color.white)
@@ -204,7 +205,22 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        sentAway = false
         refresh()
+    }
+
+    /** A screen this one opened and expects Back to return from; leaving for it is not leaving. */
+    override fun startActivity(intent: Intent?) {
+        sentAway = true
+        super.startActivity(intent)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Gone to home or another app: this screen holds nothing worth keeping in memory,
+        // it rebuilds from the preferences in a moment. Not when a rotation is restarting
+        // it, and not while a settings page or permission dialog we opened is in front.
+        if (!sentAway && !isChangingConfigurations) finish()
     }
 
     override fun onPause() {
@@ -218,7 +234,7 @@ class MainActivity : Activity() {
             !shizukuInstalled() -> startActivity(Intent(Intent.ACTION_VIEW,
                 Uri.parse("https://github.com/RikkaApps/Shizuku/releases")))
             !ShizukuInjector.running() -> packageManager.getLaunchIntentForPackage(SHIZUKU_PKG)?.let { startActivity(it) }
-            !ShizukuInjector.granted() -> try { Shizuku.requestPermission(1) } catch (_: Throwable) {}
+            !ShizukuInjector.granted() -> try { sentAway = true; Shizuku.requestPermission(1) } catch (_: Throwable) {}
             else -> startShizuku()
         }
     }
@@ -256,6 +272,7 @@ class MainActivity : Activity() {
         batteryAction.text = if (pm.isIgnoringBatteryOptimizations(packageName)) "ON" else "OPEN"
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            sentAway = true
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 2)
         }
         OverlayService.startIfWanted(this)
