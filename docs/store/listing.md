@@ -28,11 +28,11 @@ Setting up.
 The bar is an overlay, so it needs "Display over other apps". Delivering keys needs a small helper started once per boot, in one of three ways: Shizuku, which needs no root and no PC after the first setup; one adb command from a PC; or root. The settings screen walks through each and says whether the helper is running.
 
 Volume keys as modifiers.
-While a keyboard is up, holding Volume Down holds Ctrl, the same as in Termux. Volume Up and both together can be bound to any modifier or left alone. Elsewhere the volume keys do what they always did.
+While a keyboard is up or the bar is pinned, holding Volume Down holds Ctrl, the same as in Termux. Volume Up and both together can be bound to any modifier or left alone. The volume stays put while a bound key is at work. Elsewhere the volume keys do what they always did.
 
 Also in the app:
 - Pinned mode. Tap the notification and the bar appears with no keyboard, for Ctrl+Z on a screen with no text field.
-- Aim mode. Long-press the bar's handle, then tap anywhere for a mouse click, or drag for a mouse drag. In a browser a drag selects text instead of scrolling. Long-press for a right click (on an image in a browser, the context menu with Copy image in it) or Select text, which lifts the text under your finger into a panel where you can select part of it and copy. That works on a chat message, which no pointer can select part of otherwise.
+- Aim mode. Long-press the bar's handle, then tap anywhere for a mouse click, or drag for a mouse drag. In a browser a drag selects text instead of scrolling. Long-press for a menu: a right click, Select text, which lifts the text under your finger into a panel where you can select part of it and copy, or Copy image, which puts the picture under your finger on the clipboard as it appears on screen. Both work where the app offers no copy at all, a chat message or a photo in it.
 - A handle to drag the bar up or down, tap to fold it away to a pill, and a hidden mode where nothing is on screen but the volume keys still work.
 - Colours from your wallpaper by default, as the rest of Android 12 does, or eleven editor themes: Termux, Dracula, Monokai, One Dark, Nord, Gruvbox, Solarized, Catppuccin, Tokyo Night, GitHub Light. Opacity for the grid and its letters, row height, and calibration of the grid's edges so its letters line up with your keyboard's.
 - Hold Tab for a real tab character where a tap would move focus.

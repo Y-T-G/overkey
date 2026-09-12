@@ -129,6 +129,8 @@ class InjectorClient(private val context: Context) {
     var onVolumeKeys: java.util.function.Consumer<Int>? = null
     /** The answer to [grab], on the main thread. */
     var onText: java.util.function.Consumer<String>? = null
+    /** The answer to [grabImage], on the main thread. */
+    var onImage: java.util.function.Consumer<ByteArray>? = null
     private val main = Handler(android.os.Looper.getMainLooper())
 
     /**
@@ -160,6 +162,24 @@ class InjectorClient(private val context: Context) {
 
     /** Asks for the text under a screen point; [onText] gets it, or "" when there is none. */
     fun grab(x: Int, y: Int) = write("x $x $y\n")
+
+    /** Asks for the picture under a screen point as PNG; [onImage] gets it, or an empty array. */
+    fun grabImage(x: Int, y: Int) = write("i $x $y\n")
+
+    private var swallowMask = 0
+
+    /**
+     * Which volume keys (bit 0 Vol-, bit 1 Vol+) the injector should keep from the system,
+     * so the volume does not change while they work as modifiers. Sent when it changes, and
+     * again to every new injector.
+     */
+    fun swallow(mask: Int) {
+        handler.post {
+            if (mask == swallowMask) return@post
+            swallowMask = mask
+            if (out != null) write("g $mask\n")
+        }
+    }
 
     /**
      * A left-button drag along [path], screen x,y pairs, first to last. Sent whole; the
@@ -214,6 +234,7 @@ class InjectorClient(private val context: Context) {
             // The injector this replaces may have died with a modifier down in the app in
             // front; an UP for each costs nothing and clears it.
             for (m in Mods.MODIFIERS) o.write("${KeyEvent.ACTION_UP} ${m.code} 0 0\n".toByteArray(StandardCharsets.UTF_8))
+            if (swallowMask != 0) o.write("g $swallowMask\n".toByteArray(StandardCharsets.UTF_8))
             o.flush()
             true
         } catch (_: IOException) {
@@ -233,10 +254,11 @@ class InjectorClient(private val context: Context) {
                         val mask = line[2] - '0'
                         if (mask in 0..3) main.post { onVolumeKeys?.accept(mask) }
                     } else if (line.startsWith("x")) {
-                        val text = try {
-                            String(Base64.decode(line.substring(1).trim(), Base64.DEFAULT), StandardCharsets.UTF_8)
-                        } catch (_: IllegalArgumentException) { "" }
+                        val text = String(decode(line), StandardCharsets.UTF_8)
                         main.post { onText?.accept(text) }
+                    } else if (line.startsWith("i")) {
+                        val png = decode(line)
+                        main.post { onImage?.accept(png) }
                     }
                 }
             } catch (_: IOException) {
@@ -260,6 +282,13 @@ class InjectorClient(private val context: Context) {
                 }
             }
         }.start()
+    }
+
+    /** The base64 body of an answer line, after its one-letter tag; empty for none or garbage. */
+    private fun decode(line: String): ByteArray = try {
+        Base64.decode(line.substring(1).trim(), Base64.DEFAULT)
+    } catch (_: IllegalArgumentException) {
+        ByteArray(0)
     }
 
     private fun close() {

@@ -119,6 +119,10 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             volumeKeys(mask)
         }
         client.onText = Consumer { text -> if (text.isEmpty()) toast("No text there") else showText(text) }
+        client.onImage = Consumer { png ->
+            shy(false)
+            if (png.isEmpty()) toast("Nothing to copy there") else copyImage(png)
+        }
         ready = true
         reload()
         instance = this
@@ -154,6 +158,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         grid[1] = (p.getInt(Prefs.BOTTOM, 0) * density).toInt()
         grid[2] = (p.getInt(Prefs.LEFT, 0) * density).toInt()
         grid[3] = (p.getInt(Prefs.RIGHT, 0) * density).toInt()
+        volumeKeys(volMask) // the bindings may have changed
         layoutBar()
         layoutChord()
     }
@@ -190,14 +195,21 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     }
 
     /**
-     * A held volume key is a finger on its bound modifier key, only while a keyboard is up so
-     * the keys keep their normal job elsewhere. Both held with a binding of their own wins
-     * over the single-key bindings. Letting go lets go: unlike a tap on the bar, a volume key
-     * never leaves the modifier armed.
+     * A held volume key is a finger on its bound modifier key, only while the bar has a place
+     * (a keyboard up, or pinned) so the keys keep their normal job elsewhere. Both held with a
+     * binding of their own wins over the single-key bindings. Letting go lets go: unlike a
+     * tap on the bar, a volume key never leaves the modifier armed.
      */
     private fun volumeKeys(mask: Int) {
+        // The bound keys are kept from the system while they have a job, so the volume
+        // stays put; elsewhere they are the system's again.
+        var bound = 0
+        if (volDown != null) bound = bound or 1
+        if (volUp != null) bound = bound or 2
+        if (volBoth != null) bound = 3
+        client.swallow(if (imeBounds.isEmpty) 0 else bound)
         val want = ArrayList<Key>(2)
-        if (!imeBounds.isEmpty && onKeyboard) {
+        if (!imeBounds.isEmpty) {
             if (mask == 3 && volBoth != null) {
                 want.add(volBoth!!)
             } else {
@@ -245,6 +257,26 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             .putInt(Prefs.LEFT, (grid[2] / density).toInt())
             .putInt(Prefs.RIGHT, (grid[3] / density).toInt())
             .apply()
+    }
+
+    private val unshy = Runnable { shy(false) }
+
+    /**
+     * Takes the bar, pill and grid out of the picture (window alpha 0, so the layout is
+     * untouched) while a screenshot is taken, and back after. Back on its own after five
+     * seconds in case no answer ever comes.
+     */
+    private fun shy(on: Boolean) {
+        val a = if (on) 0f else 1f
+        handler.removeCallbacks(unshy)
+        if (barLp.alpha == a) return
+        barLp.alpha = a
+        pillLp.alpha = a
+        chordLp.alpha = a
+        if (barShown) wm.updateViewLayout(bar, barLp)
+        if (pillShown) wm.updateViewLayout(pill, pillLp)
+        if (chordShown) wm.updateViewLayout(chord, chordLp)
+        if (on) handler.postDelayed(unshy, 5000)
     }
 
     private fun params() = WindowManager.LayoutParams(
@@ -340,11 +372,16 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             aimView?.let { wm.removeView(it) }
             aimView = null
             if (button == AimView.CANCEL) return@AimView
-            if (button == AimView.TEXT) {
+            if (button == AimView.TEXT || button == AimView.IMAGE) {
                 if (!client.connected) toast("No injector running")
                 else {
-                    // Asked once the window is gone, or its own node is in the dump.
-                    handler.postDelayed({ client.grab(path[0], path[1]) }, 150)
+                    // Asked once the window is gone: its tint would be in the screenshot
+                    // and its node in the tree. The bar and grid go out of the picture too,
+                    // for the same reason, until the answer comes.
+                    if (button == AimView.IMAGE) shy(true)
+                    handler.postDelayed({
+                        if (button == AimView.TEXT) client.grab(path[0], path[1]) else client.grabImage(path[0], path[1])
+                    }, 150)
                 }
                 return@AimView
             }
@@ -456,6 +493,25 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         textPanel = null
     }
 
+    /**
+     * The picture under the finger goes on the clipboard as a PNG served by [ClipProvider].
+     * Apps that take an image paste (a chat's message box, a note, a browser) get the pixels
+     * as they were on screen; the file itself is not what was copied.
+     */
+    private fun copyImage(png: ByteArray) {
+        val f = ClipProvider.file(context)
+        try {
+            f.writeBytes(png)
+        } catch (_: java.io.IOException) {
+            toast("Could not save the image")
+            return
+        }
+        val uri = ClipProvider.uri(context)
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newUri(context.contentResolver, "image", uri))
+        toast("Image copied")
+    }
+
     private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
 
     /** At most [n] of the x,y pairs in [path], evenly spaced, the first and last kept. */
@@ -510,8 +566,9 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         private var moved = false
         private var over = false // reported; the rest of this gesture is nobody's
         private var menu = false // the long-press menu is up; the next tap chooses
-        private val items = arrayOf("Right click", "Select text")
-        private val boxes = arrayOf(RectF(), RectF()) // in view coordinates
+        private val items = arrayOf("Right click", "Select text", "Copy image")
+        private val choices = intArrayOf(RIGHT, TEXT, IMAGE)
+        private val boxes = Array(items.size) { RectF() } // in view coordinates
         private val hold = Runnable {
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             over = true
@@ -520,18 +577,20 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             invalidate()
         }
 
-        /** Two pills side by side, centred over the finger and clear of it, kept on screen. */
+        /** Pills in a row, centred over the finger and clear of it, kept on screen. */
         private fun layoutMenu() {
             val h = 40 * density
             val gap = 8 * density
             val pad = 16 * density
-            val w = FloatArray(2) { label.measureText(items[it]) + 2 * pad }
-            val total = w[0] + gap + w[1]
-            val left = (downX - total / 2).coerceIn(gap, width - total - gap)
+            val w = FloatArray(items.size) { label.measureText(items[it]) + 2 * pad }
+            val total = w.sum() + gap * (items.size - 1)
+            var left = (downX - total / 2).coerceIn(gap, width - total - gap)
             var top = downY - 56 * density - h
             if (top < gap) top = downY + 56 * density
-            boxes[0].set(left, top, left + w[0], top + h)
-            boxes[1].set(left + w[0] + gap, top, left + total, top + h)
+            for (i in items.indices) {
+                boxes[i].set(left, top, left + w[i], top + h)
+                left += w[i] + gap
+            }
         }
 
         private fun finish(button: Int) {
@@ -545,7 +604,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         override fun onDraw(canvas: Canvas) {
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tint)
             if (moved) canvas.drawPath(trail, ink)
-            if (menu) for (i in 0..1) {
+            if (menu) for (i in items.indices) {
                 val b = boxes[i]
                 val r = b.height() / 2
                 canvas.drawRoundRect(b, r, r, fill)
@@ -559,11 +618,8 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                 MotionEvent.ACTION_DOWN -> {
                     if (menu) {
                         // The point reported is still the long-pressed one, not the tap.
-                        finish(when {
-                            boxes[0].contains(e.x, e.y) -> RIGHT
-                            boxes[1].contains(e.x, e.y) -> TEXT
-                            else -> CANCEL
-                        })
+                        val i = boxes.indexOfFirst { it.contains(e.x, e.y) }
+                        finish(if (i < 0) CANCEL else choices[i])
                         return true
                     }
                     points.clear()
@@ -608,6 +664,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             const val RIGHT = 2
             const val DRAG = 3
             const val TEXT = 4
+            const val IMAGE = 5
         }
     }
 

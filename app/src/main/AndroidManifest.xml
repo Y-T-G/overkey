@@ -45,6 +45,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- The picture aim mode copied, for whatever pastes it. -->
+        <provider
+            android:name=".ClipProvider"
+            android:authorities="${applicationId}.clip"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Shizuku hands this app its binder through here. -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
