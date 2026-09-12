@@ -277,6 +277,8 @@ class MainActivity : Activity() {
     private fun adbCommand() = "adb shell \"${InjectorClient.launchCommand(this)}\""
 
     private fun refresh() {
+        // Posted from a few places a second or so out; by then the screen may have been left.
+        if (isFinishing || isDestroyed) return
         val overlay = Settings.canDrawOverlays(this)
         overlayAction.text = if (overlay) "ON" else "GRANT"
         if (!overlay && Prefs.root(this) && !regaining) {

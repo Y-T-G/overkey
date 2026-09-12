@@ -234,6 +234,9 @@ class InjectorClient(private val context: Context) {
             // The injector this replaces may have died with a modifier down in the app in
             // front; an UP for each costs nothing and clears it.
             for (m in Mods.MODIFIERS) o.write("${KeyEvent.ACTION_UP} ${m.code} 0 0\n".toByteArray(StandardCharsets.UTF_8))
+            // And no mouse button left down: the injector releases per client when one
+            // goes, but the line costs nothing and covers a client that came back first.
+            o.write("u\n".toByteArray(StandardCharsets.UTF_8))
             if (swallowMask != 0) o.write("g $swallowMask\n".toByteArray(StandardCharsets.UTF_8))
             o.flush()
             true

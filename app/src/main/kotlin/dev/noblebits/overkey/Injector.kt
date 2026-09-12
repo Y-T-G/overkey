@@ -75,19 +75,44 @@ object Injector {
         @Volatile var volume = false // known to carry a volume key, so it may be grabbed
         @Volatile var grabbed = false
         @Volatile var reopen = false // closed on purpose for a grab change; the thread opens it again
+        @Volatile var held = 0 // volume key bits down on this device right now
+        /**
+         * A grab change is wanted but a key is down: closing now would report a release the
+         * finger has not made, and the system, which saw the DOWN, would never get the UP.
+         * The reader closes at the next UP instead.
+         */
+        @Volatile var pending = false
     }
 
     private val devices = ArrayList<Device>()
     /** Volume key bits (1 Vol-, 2 Vol+) the client wants kept from the system; guarded by clients. */
     private var swallow = 0
 
-    /** Linux key codes to Android key codes, for what a grabbed device is relayed. */
-    private val relayCodes = mapOf(
-        114 to KeyEvent.KEYCODE_VOLUME_DOWN, 115 to KeyEvent.KEYCODE_VOLUME_UP, 116 to KeyEvent.KEYCODE_POWER,
-        113 to KeyEvent.KEYCODE_VOLUME_MUTE, 212 to KeyEvent.KEYCODE_CAMERA, 102 to KeyEvent.KEYCODE_HOME,
-        158 to KeyEvent.KEYCODE_BACK, 139 to KeyEvent.KEYCODE_MENU, 226 to KeyEvent.KEYCODE_HEADSETHOOK,
-        164 to KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 163 to KeyEvent.KEYCODE_MEDIA_NEXT, 165 to KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-    )
+    /**
+     * Linux key codes to Android key codes, for what a grabbed device is relayed: the
+     * system's own Generic.kl, which is what it would have used, with a short list behind it
+     * for a build that hides the file.
+     */
+    private val relayCodes: Map<Int, Int> by lazy {
+        val map = HashMap<Int, Int>()
+        try {
+            for (line in File("/system/usr/keylayout/Generic.kl").readLines()) {
+                val parts = line.trim().split(' ', '\t').filter { it.isNotEmpty() }
+                if (parts.size < 3 || parts[0] != "key") continue
+                val code = parts[1].toIntOrNull() ?: continue
+                val key = KeyEvent.keyCodeFromString("KEYCODE_" + parts[2])
+                if (key != KeyEvent.KEYCODE_UNKNOWN) map[code] = key
+            }
+        } catch (_: Exception) {
+        }
+        if (map.isEmpty()) map.putAll(mapOf(
+            114 to KeyEvent.KEYCODE_VOLUME_DOWN, 115 to KeyEvent.KEYCODE_VOLUME_UP, 116 to KeyEvent.KEYCODE_POWER,
+            113 to KeyEvent.KEYCODE_VOLUME_MUTE, 212 to KeyEvent.KEYCODE_CAMERA, 102 to KeyEvent.KEYCODE_HOME,
+            158 to KeyEvent.KEYCODE_BACK, 139 to KeyEvent.KEYCODE_MENU, 226 to KeyEvent.KEYCODE_HEADSETHOOK,
+            164 to KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, 163 to KeyEvent.KEYCODE_MEDIA_NEXT, 165 to KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+        ))
+        map
+    }
 
     /**
      * One reader per input device that has a volume key, found in sysfs (`capabilities/key`
@@ -122,6 +147,9 @@ object Injector {
             if (!f.canRead()) continue
             val sure = if (sysfs) supports(f, 114) || supports(f, 115) else known?.contains(f.path) ?: false
             if ((sysfs || known != null) && !sure) continue
+            // A keyboard, remote or controller with a volume key on it is left alone: a grab
+            // would take every key it has, and the relay knows only what Generic.kl names.
+            if (sysfs && supports(f, 30)) continue // KEY_A
             val d = Device(f)
             d.volume = sure
             synchronized(devices) { devices.add(d) }
@@ -134,10 +162,11 @@ object Injector {
                     synchronized(clients) {
                         d.stream = inp
                         d.reopen = false
+                        d.pending = false
                         grabbed = swallow != 0 && d.volume && grab(inp.fd)
                         d.grabbed = grabbed
                     }
-                    var mine = 0 // the bits this device holds down
+                    d.held = 0
                     try {
                         val data = DataInputStream(inp)
                         val buf = ByteArray(eventSize)
@@ -153,33 +182,39 @@ object Injector {
                                 else -> 0
                             }
                             if (bit != 0 && value != 2) {
-                                mine = if (value == 1) mine or bit else mine and bit.inv()
+                                d.held = if (value == 1) d.held or bit else d.held and bit.inv()
                                 volume(bit, value == 1)
                                 if (!d.volume) {
                                     // Learned the hard way; from now on it can be grabbed.
                                     d.volume = true
-                                    if (synchronized(clients) { swallow != 0 }) {
-                                        d.reopen = true
-                                        inp.close()
-                                    }
+                                    if (synchronized(clients) { swallow != 0 }) d.pending = true
                                 }
                             }
                             if (grabbed && (bit and swallow) == 0) {
-                                val key = relayCodes[code] ?: continue
-                                val now = SystemClock.uptimeMillis()
-                                val repeat = if (value == 2) (repeats[code] ?: 0) + 1 else 0
-                                repeats[code] = repeat
-                                if (value == 1) downTimes[code] = now
-                                val ev = KeyEvent(downTimes[code] ?: now, now, if (value == 0) KeyEvent.ACTION_UP else KeyEvent.ACTION_DOWN,
-                                    key, repeat, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
-                                inject.invoke(im, ev, 0)
+                                val key = relayCodes[code]
+                                if (key != null) {
+                                    val now = SystemClock.uptimeMillis()
+                                    val repeat = if (value == 2) (repeats[code] ?: 0) + 1 else 0
+                                    repeats[code] = repeat
+                                    if (value == 1) downTimes[code] = now
+                                    val ev = KeyEvent(downTimes[code] ?: now, now, if (value == 0) KeyEvent.ACTION_UP else KeyEvent.ACTION_DOWN,
+                                        key, repeat, 0, KeyCharacterMap.VIRTUAL_KEYBOARD, 0, 0, InputDevice.SOURCE_KEYBOARD)
+                                    inject.invoke(im, ev, 0)
+                                }
+                            }
+                            // A grab change that waited for the keys to come up happens now.
+                            if (d.pending && d.held == 0) {
+                                d.reopen = true
+                                inp.close()
                             }
                         }
                     } catch (_: Exception) {
-                        // The device went away (a headset unplugged, say), or was closed for
-                        // a grab change, with a key down as far as anyone knows: let go.
-                        if (mine and 1 != 0) volume(1, false)
-                        if (mine and 2 != 0) volume(2, false)
+                        // The device went away (a headset unplugged, say) with a key down as
+                        // far as anyone knows: let go. Not after a close of our own, which
+                        // waits for the keys to be up.
+                        if (d.held and 1 != 0) volume(1, false)
+                        if (d.held and 2 != 0) volume(2, false)
+                        d.held = 0
                     }
                     try { inp.close() } catch (_: Exception) {}
                     if (!d.reopen) break
@@ -210,11 +245,14 @@ object Injector {
         null
     }
 
+    /** The kernel's word size, which is what sysfs bitmaps are printed in; 32 on a 32-bit kernel. */
+    private val wordBits = if ((System.getProperty("os.arch") ?: "").contains("64")) 64 else 32
+
     /** Whether the device reports Linux key [code], from its sysfs capability bitmap. */
     private fun supports(f: File, code: Int): Boolean = try {
         val words = File("/sys/class/input/${f.name}/device/capabilities/key").readText().trim().split(' ')
-        val word = words.getOrNull(words.size - 1 - code / 64) ?: return false
-        (java.lang.Long.parseUnsignedLong(word, 16) ushr (code % 64)) and 1L == 1L
+        val word = words.getOrNull(words.size - 1 - code / wordBits) ?: return false
+        (java.lang.Long.parseUnsignedLong(word, 16) ushr (code % wordBits)) and 1L == 1L
     } catch (_: Exception) {
         false
     }
@@ -222,11 +260,16 @@ object Injector {
     /** EVIOCGRAB on [fd]; true if the device is now ours alone. */
     private fun grab(fd: java.io.FileDescriptor): Boolean = try {
         val os = Class.forName("android.system.Os")
-        val m = os.methods.first { it.name == "ioctlInt" }
-        // Older signatures take a MutableInt out-argument; either way the native side passes
-        // a pointer, and any non-zero argument grabs.
-        if (m.parameterCount == 2) m.invoke(null, fd, EVIOCGRAB)
-        else m.invoke(null, fd, EVIOCGRAB, Class.forName("android.util.MutableInt").getConstructor(Integer.TYPE).newInstance(1))
+        val all = os.methods.filter { it.name == "ioctlInt" }
+        // The two-argument form where there is one; older builds take an out-argument
+        // (MutableInt, later Int32Ref) as a third. Either way the native side passes a
+        // pointer, and any non-zero argument grabs.
+        val two = all.firstOrNull { it.parameterCount == 2 }
+        if (two != null) two.invoke(null, fd, EVIOCGRAB)
+        else {
+            val m = all.first { it.parameterCount == 3 }
+            m.invoke(null, fd, EVIOCGRAB, m.parameterTypes[2].getConstructor(Integer.TYPE).newInstance(1))
+        }
         true
     } catch (_: Throwable) {
         false
@@ -234,7 +277,10 @@ object Injector {
 
     private const val EVIOCGRAB = 0x40044590
 
-    /** The client's wish for the volume keys changed: every volume device follows. */
+    /**
+     * The client's wish for the volume keys changed: every volume device follows, at once
+     * when its keys are up, at the next release otherwise.
+     */
     private fun setSwallow(mask: Int) {
         synchronized(clients) {
             if (mask == swallow) return
@@ -242,8 +288,13 @@ object Injector {
             val want = mask != 0
             synchronized(devices) {
                 for (d in devices) if (d.grabbed != want) {
-                    d.reopen = true
-                    try { d.stream?.close() } catch (_: Exception) {}
+                    d.pending = true
+                    // Checked after the flag is up: a release that lands in between is
+                    // then seen by one side or the other. A double close is harmless.
+                    if (d.held == 0) {
+                        d.reopen = true
+                        try { d.stream?.close() } catch (_: Exception) {}
+                    }
                 }
             }
         }
@@ -315,18 +366,28 @@ object Injector {
                     if (parse(line.substring(2), p, 1)) setSwallow(p[0] and 3)
                     continue
                 }
-                if (line.startsWith("x ")) {
-                    val text = if (parse(line.substring(2), p, 2)) textAt(p[0], p[1]) else null
-                    val b64 = if (text == null) "" else Base64.encodeToString(text.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
-                    out.write("x $b64\n".toByteArray(StandardCharsets.UTF_8))
-                    out.flush()
-                    continue
-                }
-                if (line.startsWith("i ")) {
-                    val png = if (parse(line.substring(2), p, 2)) imageAt(p[0], p[1]) else null
-                    val b64 = if (png == null) "" else Base64.encodeToString(png, Base64.NO_WRAP)
-                    out.write("i $b64\n".toByteArray(StandardCharsets.UTF_8))
-                    out.flush()
+                if (line.startsWith("x ") || line.startsWith("i ")) {
+                    // Answered from another thread: the lookup can take seconds, and keys
+                    // typed meanwhile must not queue behind it. The answer is one long line
+                    // written under the clients lock, so a "v" line from a device thread
+                    // cannot land in the middle of it.
+                    val tag = line[0]
+                    val x = if (parse(line.substring(2), p, 2)) p[0] else Int.MIN_VALUE
+                    val y = p[1]
+                    val o = out
+                    Thread {
+                        val body: ByteArray? = if (x == Int.MIN_VALUE) null
+                            else if (tag == 'x') textAt(x, y)?.toByteArray(StandardCharsets.UTF_8)
+                            else imageAt(x, y)
+                        val b64 = if (body == null) "" else Base64.encodeToString(body, Base64.NO_WRAP)
+                        synchronized(clients) {
+                            try {
+                                o.write("$tag $b64\n".toByteArray(StandardCharsets.UTF_8))
+                                o.flush()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }.start()
                     continue
                 }
                 if (!parse(line, p, 4)) continue
@@ -496,9 +557,27 @@ object Injector {
         // A hardware bitmap cannot be cropped or encoded; a software copy can.
         val soft = shot.copy(Bitmap.Config.ARGB_8888, false)
         val crop = Bitmap.createBitmap(soft, box.left, box.top, box.width(), box.height())
+        // A secure window screenshots as flat black, not as a failure; one colour all over
+        // is no picture, so nothing goes on the clipboard.
+        if (flat(crop)) return@automation null
         val out = ByteArrayOutputStream()
         crop.compress(Bitmap.CompressFormat.PNG, 100, out)
         out.toByteArray()
+    }
+
+    /** True if every sampled pixel is the same colour (every 8th in each direction). */
+    private fun flat(b: Bitmap): Boolean {
+        val first = b.getPixel(0, 0)
+        var y = 0
+        while (y < b.height) {
+            var x = 0
+            while (x < b.width) {
+                if (b.getPixel(x, y) != first) return false
+                x += 8
+            }
+            y += 8
+        }
+        return true
     }
 
     /** The smallest picture-showing node under the point, else the smallest node under it. */
@@ -537,19 +616,31 @@ object Injector {
      * by reflection as this process may. Null on any failure.
      */
     private fun <T> automation(block: (UiAutomation) -> T?): T? {
-        try {
-            val conn = Class.forName("android.app.UiAutomationConnection").getDeclaredConstructor().newInstance()
-            val ua = UiAutomation::class.java
-                .getConstructor(Looper::class.java, Class.forName("android.app.IUiAutomationConnection"))
-                .newInstance(uiThread.looper, conn)
-            UiAutomation::class.java.getMethod("connect").invoke(ua)
+        // One at a time: two connections cannot coexist, and a second request while the
+        // first is out would only fail.
+        synchronized(uiThread) {
+            var ua: UiAutomation? = null
             try {
+                val conn = Class.forName("android.app.UiAutomationConnection").getDeclaredConstructor().newInstance()
+                ua = UiAutomation::class.java
+                    .getConstructor(Looper::class.java, Class.forName("android.app.IUiAutomationConnection"))
+                    .newInstance(uiThread.looper, conn)
+                // With FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES (1): a plain connect unbinds
+                // every accessibility service the user runs, a screen reader included, for
+                // as long as it lasts.
+                try {
+                    UiAutomation::class.java.getMethod("connect", Integer.TYPE).invoke(ua, 1)
+                } catch (_: NoSuchMethodException) {
+                    UiAutomation::class.java.getMethod("connect").invoke(ua)
+                }
                 return block(ua)
+            } catch (_: Throwable) {
+                return null
             } finally {
-                UiAutomation::class.java.getMethod("disconnect").invoke(ua)
+                // Also after a connect that threw part-way: what it registered with the
+                // system would otherwise stay and refuse every later connection.
+                if (ua != null) try { UiAutomation::class.java.getMethod("disconnect").invoke(ua) } catch (_: Throwable) {}
             }
-        } catch (_: Throwable) {
-            return null
         }
     }
 

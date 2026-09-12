@@ -134,6 +134,10 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         aimView?.let { wm.removeView(it) }
         aimView = null
         closeText()
+        // An answer that arrives after this must not open a panel from a dead service.
+        client.onText = null
+        client.onImage = null
+        handler.removeCallbacks(unshy)
         letGo() // the UPs are queued before the socket closes below
         imeBounds.setEmpty()
         layoutBar()
@@ -264,8 +268,8 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
 
     /**
      * Takes the bar, pill and grid out of the picture (window alpha 0, so the layout is
-     * untouched) while a screenshot is taken, and back after. Back on its own after five
-     * seconds in case no answer ever comes.
+     * untouched) while a screenshot is taken, and back after. Back on its own after fifteen
+     * seconds in case no answer ever comes; the lookup before the shot can take a few.
      */
     private fun shy(on: Boolean) {
         val a = if (on) 0f else 1f
@@ -277,7 +281,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (barShown) wm.updateViewLayout(bar, barLp)
         if (pillShown) wm.updateViewLayout(pill, pillLp)
         if (chordShown) wm.updateViewLayout(chord, chordLp)
-        if (on) handler.postDelayed(unshy, 5000)
+        if (on) handler.postDelayed(unshy, 15000)
     }
 
     private fun params() = WindowManager.LayoutParams(
@@ -518,14 +522,16 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
      * as they were on screen; the file itself is not what was copied.
      */
     private fun copyImage(png: ByteArray) {
-        val f = ClipProvider.file(context)
+        // A fresh name each time: an app still reading the last clip would get a torn file
+        // if it were overwritten, and image caches keyed on the URI would show the old one.
+        val name = ClipProvider.fresh(context)
         try {
-            f.writeBytes(png)
+            ClipProvider.file(context, name).writeBytes(png)
         } catch (_: java.io.IOException) {
             toast("Could not save the image")
             return
         }
-        val uri = ClipProvider.uri(context)
+        val uri = ClipProvider.uri(context, name)
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newUri(context.contentResolver, "image", uri))
         toast("Image copied")
@@ -596,19 +602,40 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             invalidate()
         }
 
-        /** Pills in a row, centred over the finger and clear of it, kept on screen. */
+        /**
+         * Pills in rows, centred over the finger and clear of it, kept on screen. Rows wrap
+         * where the screen is too narrow for one: three pills are about 355 dp, and a
+         * 320 dp-class screen or a large display size has less than that.
+         */
         private fun layoutMenu() {
             val h = 40 * density
             val gap = 8 * density
             val pad = 16 * density
             val w = FloatArray(items.size) { label.measureText(items[it]) + 2 * pad }
-            val total = w.sum() + gap * (items.size - 1)
-            var left = (downX - total / 2).coerceIn(gap, width - total - gap)
-            var top = downY - 56 * density - h
-            if (top < gap) top = downY + 56 * density
+            // Rows: each a run of indices whose widths and gaps fit in the width.
+            val rows = ArrayList<IntRange>()
+            var start = 0
+            var run = 0f
             for (i in items.indices) {
-                boxes[i].set(left, top, left + w[i], top + h)
-                left += w[i] + gap
+                val next = if (i == start) w[i] else run + gap + w[i]
+                if (i > start && next > width - 2 * gap) {
+                    rows.add(start until i)
+                    start = i
+                    run = w[i]
+                } else run = next
+            }
+            rows.add(start until items.size)
+            val block = rows.size * h + (rows.size - 1) * gap
+            var top = downY - 56 * density - block
+            if (top < gap) top = downY + 56 * density
+            for (row in rows) {
+                val total = row.sumOf { w[it].toDouble() }.toFloat() + gap * (row.count() - 1)
+                var left = (downX - total / 2).coerceAtMost(width - total - gap).coerceAtLeast(gap)
+                for (i in row) {
+                    boxes[i].set(left, top, left + w[i], top + h)
+                    left += w[i] + gap
+                }
+                top += h + gap
             }
         }
 
