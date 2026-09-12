@@ -16,6 +16,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -297,8 +298,22 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
      * Two windows, never both: the bar, or its pill. Swapping windows rather than resizing one
      * gives a fade instead of a frame with the small window at the old left edge.
      */
+    /**
+     * Keeps the bar (and so the pill) below the status bar and above the screen's bottom.
+     * The status bar's window lies over every overlay, so a pill dragged under it could be
+     * seen but never touched: every tap there pulled the shade down instead.
+     */
+    private fun clampBar() {
+        val m = wm.currentWindowMetrics
+        val statusBottom = m.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
+        val floor = m.bounds.height() - barHeight()
+        val top = imeBounds.top - barHeight() // barTop() with barY = 0
+        barY = barY.coerceIn(statusBottom - top, maxOf(statusBottom - top, floor - top))
+    }
+
     private fun layoutBar() {
         val r = imeBounds
+        if (!r.isEmpty) clampBar()
         if (r.isEmpty || collapsed || hidden) {
             if (barShown) wm.removeView(bar)
             barShown = false
