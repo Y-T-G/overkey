@@ -1,7 +1,13 @@
 package dev.noblebits.overkey
 
+import android.app.UiAutomation
+import android.graphics.Rect
+import android.os.HandlerThread
+import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
 import android.view.InputDevice
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.InputEvent
 import android.view.KeyCharacterMap
 import android.view.KeyEvent
@@ -32,13 +38,14 @@ import javax.crypto.spec.SecretKeySpec
  * itself never crosses the socket and a process squatting the port learns nothing. Then one
  * text line per event: "action keycode metaState repeat", or "m x y button" for a mouse click,
  * or a drag as "d x y" (left button down there), "t x y" lines along the way and "u" (up).
- * The other way, the injector sends "v <mask>" whenever a volume key goes down or up, bit 0 for
- * Vol- and bit 1 for Vol+: root and shell can read /dev/input, the app cannot.
+ * "x x y" asks for the text under a point and is answered with "x <base64 utf-8>", empty when
+ * there is none. The other way, the injector sends "v <mask>" whenever a volume key goes down
+ * or up, bit 0 for Vol- and bit 1 for Vol+: root and shell can read /dev/input, the app cannot.
  */
 object Injector {
     const val PORT = 27301
     /** Bumped whenever the protocol changes; a running injector with another version is stale. */
-    const val VERSION = 4
+    const val VERSION = 5
     private const val NONCE = 16
     private const val MAC = 32
 
@@ -160,6 +167,13 @@ object Injector {
                     mouse.release()
                     continue
                 }
+                if (line.startsWith("x ")) {
+                    val text = if (parse(line.substring(2), p, 2)) textAt(p[0], p[1]) else null
+                    val b64 = if (text == null) "" else Base64.encodeToString(text.toByteArray(StandardCharsets.UTF_8), Base64.NO_WRAP)
+                    out.write("x $b64\n".toByteArray(StandardCharsets.UTF_8))
+                    out.flush()
+                    continue
+                }
                 if (!parse(line, p, 4)) continue
                 val action = p[0]
                 val code = p[1]
@@ -275,6 +289,83 @@ object Injector {
             inject.invoke(im, ev, 0)
             ev.recycle()
         }
+    }
+
+    private val uiThread by lazy { HandlerThread("ui").apply { start() } }
+
+    /**
+     * The text under a screen point, from the accessibility tree of the window in front.
+     * Read through [UiAutomation], which only root and shell may connect (the app cannot),
+     * connected for the one read: two cannot be connected at once, and a held connection
+     * would lock out adb's uiautomator. Not `uiautomator dump`: that waits for the screen
+     * to go idle, and a status bar that keeps redrawing (a network speed readout) means it
+     * never does. Of the nodes under the point that carry text, the smallest wins: the
+     * message over the bubble over the list. A content description stands in for text.
+     * Null when there is none or the window is secure. The connection and disconnect are
+     * hidden API, reached by reflection as this process may.
+     */
+    private fun textAt(x: Int, y: Int): String? {
+        try {
+            val conn = Class.forName("android.app.UiAutomationConnection").getDeclaredConstructor().newInstance()
+            val ua = UiAutomation::class.java
+                .getConstructor(Looper::class.java, Class.forName("android.app.IUiAutomationConnection"))
+                .newInstance(uiThread.looper, conn)
+            UiAutomation::class.java.getMethod("connect").invoke(ua)
+            try {
+                // The active window is known a moment after connecting, so a few tries 50 ms
+                // apart. A web view builds its page tree only once it sees a service connect,
+                // and until then the whole page is one node described "Web View": a hit that
+                // is only a description gets six more looks 300 ms apart for real text.
+                var hit: Hit? = null
+                var tries = 0
+                while (tries++ < 20) {
+                    val root = ua.rootInActiveWindow
+                    if (root != null) {
+                        hit = textAt(root, x, y)
+                        if (hit != null && !hit.desc) break
+                        if (hit != null && tries > 6) break
+                    }
+                    SystemClock.sleep(if (hit == null) 50 else 300)
+                }
+                return hit?.text
+            } finally {
+                UiAutomation::class.java.getMethod("disconnect").invoke(ua)
+            }
+        } catch (_: Throwable) {
+            return null
+        }
+    }
+
+    private class Hit(val text: String, val desc: Boolean)
+
+    /** The smallest node under the point with text; failing that, the smallest with a description. */
+    private fun textAt(root: AccessibilityNodeInfo, x: Int, y: Int): Hit? {
+        val r = Rect()
+        val stack = ArrayList<AccessibilityNodeInfo>()
+        stack.add(root)
+        var text: String? = null
+        var desc: String? = null
+        var textArea = Long.MAX_VALUE
+        var descArea = Long.MAX_VALUE
+        while (stack.isNotEmpty()) {
+            val n = stack.removeAt(stack.size - 1)
+            n.getBoundsInScreen(r)
+            // A child can lie outside its parent (a list's off-screen rows do), so the walk
+            // does not stop at a parent that misses the point.
+            for (i in 0 until n.childCount) n.getChild(i)?.let { stack.add(it) }
+            if (!r.contains(x, y)) continue
+            val area = r.width().toLong() * r.height()
+            val t = n.text?.toString()
+            val d = n.contentDescription?.toString()
+            if (!t.isNullOrEmpty() && area < textArea) {
+                textArea = area
+                text = t
+            } else if (t.isNullOrEmpty() && !d.isNullOrEmpty() && area < descArea) {
+                descArea = area
+                desc = d
+            }
+        }
+        return if (text != null) Hit(text, false) else if (desc != null) Hit(desc, true) else null
     }
 
     /** Parses [n] space-separated ints into [out]. Hand-rolled so R8 does not pull in Kotlin's split. */

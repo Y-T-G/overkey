@@ -32,7 +32,7 @@ While a keyboard is up, holding Volume Down holds Ctrl, the same as in Termux. V
 
 Also in the app:
 - Pinned mode. Tap the notification and the bar appears with no keyboard, for Ctrl+Z on a screen with no text field.
-- Aim mode. Long-press the bar's handle, then tap anywhere for a mouse click, long-press for a right click, or drag for a mouse drag. In a browser a right click on an image opens the context menu with Copy image in it, and a drag selects text instead of scrolling.
+- Aim mode. Long-press the bar's handle, then tap anywhere for a mouse click, or drag for a mouse drag. In a browser a drag selects text instead of scrolling. Long-press for a right click (on an image in a browser, the context menu with Copy image in it) or Select text, which lifts the text under your finger into a panel where you can select part of it and copy. That works on a chat message, which no pointer can select part of otherwise.
 - A handle to drag the bar up or down, tap to fold it away to a pill, and a hidden mode where nothing is on screen but the volume keys still work.
 - Colours from your wallpaper by default, as the rest of Android 12 does, or eleven editor themes: Termux, Dracula, Monokai, One Dark, Nord, Gruvbox, Solarized, Catppuccin, Tokyo Night, GitHub Light. Opacity for the grid and its letters, row height, and calibration of the grid's edges so its letters line up with your keyboard's.
 - Hold Tab for a real tab character where a tap would move focus.

@@ -1,8 +1,11 @@
 package dev.noblebits.overkey
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -12,6 +15,10 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import java.util.function.Consumer
 
 /**
@@ -109,6 +116,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             volMask = mask
             volumeKeys(mask)
         }
+        client.onText = Consumer { text -> if (text.isEmpty()) toast("No text there") else showText(text) }
         ready = true
         reload()
         instance = this
@@ -118,6 +126,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (instance === this) instance = null
         aimView?.let { wm.removeView(it) }
         aimView = null
+        closeText()
         letGo() // the UPs are queued before the socket closes below
         imeBounds.setEmpty()
         layoutBar()
@@ -310,11 +319,14 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
 
     /**
      * Aim mode, from a long press on the grip: the whole screen takes the next touch and turns
-     * it into a mouse gesture through the injector. A tap is a left click at that spot, a long
-     * press a right click, a drag a left-button drag along the same path, replayed once the
-     * finger lifts. A touch tap cannot give a page element focus the way a pointer click does,
-     * which is what Ctrl+C on an image in a browser needs; a touch drag scrolls where a mouse
-     * drag selects. A second finger cancels.
+     * it into a mouse gesture through the injector. A tap is a left click at that spot, a drag
+     * a left-button drag along the same path, replayed once the finger lifts, and a long press
+     * offers a right click or the text under the finger, lifted out of the app's accessibility
+     * tree into a panel where it can be selected in part. A touch tap cannot give a page
+     * element focus the way a pointer click does, which is what Ctrl+C on an image in a
+     * browser needs; a touch drag scrolls where a mouse drag selects; and a message in a chat
+     * app is selectable by no pointer at all, only whole by long press. A second finger
+     * cancels.
      *
      * Replayed rather than live because the finger is still down on this window: on Android
      * before 14 the dispatcher allows one pointer device at a time, and a mouse DOWN injected
@@ -322,10 +334,18 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
      */
     private fun aim() {
         if (aimView != null) return
-        val v = AimView(context) { button, path ->
+        val v = AimView(context, Prefs.theme(context)) { button, path ->
             aimView?.let { wm.removeView(it) }
             aimView = null
             if (button == AimView.CANCEL) return@AimView
+            if (button == AimView.TEXT) {
+                if (!client.connected) toast("No injector running")
+                else {
+                    // Asked once the window is gone, or its own node is in the dump.
+                    handler.postDelayed({ client.grab(path[0], path[1]) }, 150)
+                }
+                return@AimView
+            }
             // The window takes a frame or two to go; a click sent at once lands on it. Not
             // View.postDelayed: a detached view (the bar, while collapsed) holds the runnable
             // until it is attached again.
@@ -346,6 +366,94 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (add(v, lp)) aimView = v
     }
 
+    private var textPanel: View? = null
+
+    /**
+     * The text lifted from under the finger, in a panel with Android's own selection: long
+     * press a word, drag the handles, COPY. The window takes focus so the selection works,
+     * but tells the keyboard it has no use for it, so a keyboard that was up stays up behind.
+     * A touch outside closes it.
+     */
+    private fun showText(text: String) {
+        closeText()
+        val theme = Prefs.theme(context)
+        val pad = (16 * density).toInt()
+        val maxH = (context.resources.displayMetrics.heightPixels * 0.45f).toInt()
+        val body = TextView(context).apply {
+            this.text = text
+            setTextColor(theme.fg)
+            textSize = 16f
+            setTextIsSelectable(true)
+            setPadding(pad, pad, pad, pad)
+            highlightColor = (theme.accent and 0x00FFFFFF) or 0x60000000
+        }
+        val scroll = object : ScrollView(context) {
+            override fun onMeasure(w: Int, h: Int) =
+                super.onMeasure(w, View.MeasureSpec.makeMeasureSpec(maxH, View.MeasureSpec.AT_MOST))
+        }.apply { addView(body) }
+        fun button(label: String, onClick: () -> Unit) = TextView(context).apply {
+            this.text = label
+            setTextColor(theme.accent)
+            textSize = 14f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(pad, pad * 3 / 4, pad, pad * 3 / 4)
+            setOnClickListener { onClick() }
+        }
+        val buttons = LinearLayout(context).apply {
+            gravity = Gravity.END
+            // The selection toolbar Android would offer needs a Window callback, which a
+            // view added straight to the window manager has not got; so a button. Ctrl+C
+            // from the bar works too: the panel holds focus, and a selectable TextView
+            // takes that shortcut itself.
+            addView(button("COPY") {
+                val a = body.selectionStart
+                val b = body.selectionEnd
+                val part = a in 0 until b
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("text", if (part) text.substring(a, b) else text))
+                toast(if (part) "Copied the selection" else "Copied all of it")
+                closeText()
+            })
+            addView(button("CLOSE") { closeText() })
+        }
+        val panel = object : LinearLayout(context) {
+            override fun onTouchEvent(e: MotionEvent): Boolean {
+                if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) closeText()
+                return super.onTouchEvent(e)
+            }
+        }.apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(theme.bg)
+                cornerRadius = 12 * density
+                setStroke(density.toInt(), theme.accent)
+            }
+            addView(scroll)
+            addView(buttons)
+        }
+        val lp = WindowManager.LayoutParams(
+            context.resources.displayMetrics.widthPixels - 2 * pad,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+                WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+            PixelFormat.TRANSLUCENT,
+        )
+        lp.dimAmount = 0.3f
+        lp.gravity = Gravity.CENTER
+        lp.windowAnimations = R.style.OverlayFade
+        if (add(panel, lp)) textPanel = panel
+    }
+
+    private fun closeText() {
+        textPanel?.let { wm.removeView(it) }
+        textPanel = null
+    }
+
+    private fun toast(msg: String) = Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+
     /** At most [n] of the x,y pairs in [path], evenly spaced, the first and last kept. */
     private fun thin(path: IntArray, n: Int): IntArray {
         val pairs = path.size / 2
@@ -361,32 +469,71 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
 
     /**
      * Full-screen tint that reports one gesture: [done] gets the button ([LEFT], [RIGHT],
-     * [DRAG] or [CANCEL]) and the touched screen points as x,y pairs, first to last. A drag
-     * draws its trail so the finger can see where the pointer will go.
+     * [DRAG], [TEXT] or [CANCEL]) and the touched screen points as x,y pairs, first to last.
+     * A drag draws its trail so the finger can see where the pointer will go. A long press
+     * opens a two-way menu at the finger, right click or select text; the next tap picks one,
+     * anywhere else cancels.
      */
-    private class AimView(context: Context, private val done: (Int, IntArray) -> Unit) : View(context) {
+    private class AimView(context: Context, private val theme: Theme, private val done: (Int, IntArray) -> Unit) : View(context) {
+        private val density = context.resources.displayMetrics.density
         private val tint = Paint().apply { color = 0x30000000 }
         private val ink = Paint().apply {
             color = 0xC0FFFFFF.toInt()
             style = Paint.Style.STROKE
-            strokeWidth = 3 * context.resources.displayMetrics.density
+            strokeWidth = 3 * density
             strokeCap = Paint.Cap.ROUND
             strokeJoin = Paint.Join.ROUND
+            isAntiAlias = true
+        }
+        private val fill = Paint().apply { color = theme.bg; isAntiAlias = true }
+        private val rim = Paint().apply {
+            color = theme.accent
+            style = Paint.Style.STROKE
+            strokeWidth = density
+            isAntiAlias = true
+        }
+        private val label = Paint().apply {
+            color = theme.fg
+            textSize = 14 * density
+            textAlign = Paint.Align.CENTER
             isAntiAlias = true
         }
         private val slop = ViewConfiguration.get(context).scaledTouchSlop
         private val points = ArrayList<Int>()
         private val trail = Path()
+        private var downX = 0f // where the finger went down, in view coordinates
+        private var downY = 0f
         private var moved = false
         private var over = false // reported; the rest of this gesture is nobody's
+        private var menu = false // the long-press menu is up; the next tap chooses
+        private val items = arrayOf("Right click", "Select text")
+        private val boxes = arrayOf(RectF(), RectF()) // in view coordinates
         private val hold = Runnable {
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-            finish(RIGHT)
+            over = true
+            menu = true
+            layoutMenu()
+            invalidate()
+        }
+
+        /** Two pills side by side, centred over the finger and clear of it, kept on screen. */
+        private fun layoutMenu() {
+            val h = 40 * density
+            val gap = 8 * density
+            val pad = 16 * density
+            val w = FloatArray(2) { label.measureText(items[it]) + 2 * pad }
+            val total = w[0] + gap + w[1]
+            val left = (downX - total / 2).coerceIn(gap, width - total - gap)
+            var top = downY - 56 * density - h
+            if (top < gap) top = downY + 56 * density
+            boxes[0].set(left, top, left + w[0], top + h)
+            boxes[1].set(left + w[0] + gap, top, left + total, top + h)
         }
 
         private fun finish(button: Int) {
-            if (over) return
+            if (over && !menu) return
             over = true
+            menu = false
             removeCallbacks(hold)
             done(button, points.toIntArray())
         }
@@ -394,14 +541,32 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         override fun onDraw(canvas: Canvas) {
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tint)
             if (moved) canvas.drawPath(trail, ink)
+            if (menu) for (i in 0..1) {
+                val b = boxes[i]
+                val r = b.height() / 2
+                canvas.drawRoundRect(b, r, r, fill)
+                canvas.drawRoundRect(b, r, r, rim)
+                canvas.drawText(items[i], b.centerX(), b.centerY() - (label.ascent() + label.descent()) / 2, label)
+            }
         }
 
         override fun onTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (menu) {
+                        // The point reported is still the long-pressed one, not the tap.
+                        finish(when {
+                            boxes[0].contains(e.x, e.y) -> RIGHT
+                            boxes[1].contains(e.x, e.y) -> TEXT
+                            else -> CANCEL
+                        })
+                        return true
+                    }
                     points.clear()
                     points.add(e.rawX.toInt())
                     points.add(e.rawY.toInt())
+                    downX = e.x
+                    downY = e.y
                     trail.reset()
                     trail.moveTo(e.x, e.y)
                     moved = false
@@ -421,8 +586,9 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                         invalidate()
                     }
                 }
-                MotionEvent.ACTION_UP -> finish(if (moved) DRAG else LEFT)
-                MotionEvent.ACTION_CANCEL -> finish(CANCEL)
+                // The long press's own lift, with the menu up, is not the choice.
+                MotionEvent.ACTION_UP -> if (!menu) finish(if (moved) DRAG else LEFT)
+                MotionEvent.ACTION_CANCEL -> if (!menu) finish(CANCEL)
             }
             return true
         }
@@ -437,6 +603,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             const val LEFT = 1
             const val RIGHT = 2
             const val DRAG = 3
+            const val TEXT = 4
         }
     }
 

@@ -3,6 +3,7 @@ package dev.noblebits.overkey
 import android.content.Context
 import android.os.Handler
 import android.provider.Settings
+import android.util.Base64
 import android.view.KeyEvent
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -126,6 +127,8 @@ class InjectorClient(private val context: Context) {
 
     /** Volume keys held right now, bit 0 Vol- and bit 1 Vol+, on the main thread. */
     var onVolumeKeys: java.util.function.Consumer<Int>? = null
+    /** The answer to [grab], on the main thread. */
+    var onText: java.util.function.Consumer<String>? = null
     private val main = Handler(android.os.Looper.getMainLooper())
 
     /**
@@ -154,6 +157,9 @@ class InjectorClient(private val context: Context) {
 
     /** A mouse click at screen coordinates; [button] is 1 for primary, 2 for secondary. */
     fun click(x: Int, y: Int, button: Int) = write("m $x $y $button\n")
+
+    /** Asks for the text under a screen point; [onText] gets it, or "" when there is none. */
+    fun grab(x: Int, y: Int) = write("x $x $y\n")
 
     /**
      * A left-button drag along [path], screen x,y pairs, first to last. Sent whole; the
@@ -226,6 +232,11 @@ class InjectorClient(private val context: Context) {
                     if (line.startsWith("v ") && line.length == 3) {
                         val mask = line[2] - '0'
                         if (mask in 0..3) main.post { onVolumeKeys?.accept(mask) }
+                    } else if (line.startsWith("x")) {
+                        val text = try {
+                            String(Base64.decode(line.substring(1).trim(), Base64.DEFAULT), StandardCharsets.UTF_8)
+                        } catch (_: IllegalArgumentException) { "" }
+                        main.post { onText?.accept(text) }
                     }
                 }
             } catch (_: IOException) {
