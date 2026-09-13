@@ -4,6 +4,9 @@ Modifier and navigation keys floating over whatever on-screen keyboard is in use
 
 ## File Map
 
+The sources are in `app/src/main/kotlin/dev/noblebits/overkey/`; everything below that line is
+given from the repository root.
+
 ```
 ├── MainActivity.kt      Setup, delivery status, theme, sliders, calibration (programmatic UI)
 ├── HelpActivity.kt      The Help screen, opened from settings, documenting the non-obvious features

@@ -1,8 +1,8 @@
 # AGENTS.md
 
 A short brief for anyone, human or AI, making a change to Overkey. The full tour of how the
-pieces fit together is in [`../ARCHITECTURE.md`](../ARCHITECTURE.md); this is just how to work in
-the repo.
+pieces fit together is in [`ARCHITECTURE.md`](ARCHITECTURE.md) beside this file; this is just how
+to work in the repo.
 
 ## What Overkey is
 

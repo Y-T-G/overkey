@@ -113,8 +113,8 @@ form Google Play asks for.
 
 ## For contributors
 
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) is the full tour of how the overlay, the injector and the
-  protocol fit together.
+- [`AGENTS/ARCHITECTURE.md`](AGENTS/ARCHITECTURE.md) is the full tour of how the overlay, the
+  injector and the protocol fit together.
 - [`AGENTS/AGENTS.md`](AGENTS/AGENTS.md) is the short brief for anyone, human or AI, making a
   change: how to build and test, and the conventions the code follows.
 
