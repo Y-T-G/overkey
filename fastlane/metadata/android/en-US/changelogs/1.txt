@@ -1,0 +1,3 @@
+First release.
+
+The bar, with modifiers that arm, hold or lock, and a chord grid over the keyboard. Aim mode, for a mouse click, a mouse drag, copying any text and copying any image. Sharing anything into the app to put it on the clipboard. Volume keys as modifiers. Pinned mode, a foldable pill, a hidden mode, and eleven editor themes or your wallpaper's accent.
