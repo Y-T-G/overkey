@@ -201,7 +201,9 @@ class MainActivity : Activity() {
             "type text rather than press keys, so they cannot join a chord. Shift works with the " +
             "arrows to select.")
         help("The handle", "The strip under the keys. Drag it to move the bar. Tap to fold the " +
-            "bar away to a pill, tap the pill to bring it back. Long-press for aim mode.")
+            "bar away to a pill, tap the pill to bring it back. Drag the pill up past the top of " +
+            "the screen, onto the cross, to put everything away; Show in the notification brings " +
+            "it back. Long-press for aim mode.")
         help("Aim mode", "The screen dims and takes one gesture, sent as a mouse through the " +
             "helper. Tap: a click there, which gives an image in a browser the focus that Ctrl+C " +
             "needs. Drag: a mouse drag, replayed when you lift, which selects text in a browser " +

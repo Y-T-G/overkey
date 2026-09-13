@@ -80,6 +80,11 @@ class OverlayService : Service() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         val o = Overlays(this) { lost() }
         overlays = o
+        // The pill dragged off the top: the same as Hide from the notification.
+        o.onDismiss = Runnable {
+            o.hidden = true
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, notification())
+        }
         o.client.ensure(launch = true)
         try { Shizuku.addBinderReceivedListenerSticky(binderArrived) } catch (_: Throwable) {}
         registerReceiver(screen, IntentFilter().apply {

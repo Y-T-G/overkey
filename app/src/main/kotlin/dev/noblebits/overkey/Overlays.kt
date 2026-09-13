@@ -71,6 +71,14 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     private var barY = 0
     private val grid = IntArray(4)
 
+    // A drag of the handle in progress: where it started, and how far an upward pull has
+    // gone past the top clamp (negative), which is what dismisses the pill.
+    private var dragging = false
+    private var dragFrom = 0
+    private var overshoot = 0f
+    /** The pill was dragged off the top; the host hides the overlays and says so. */
+    var onDismiss: Runnable? = null
+
     /** Shows both overlays for dragging, whatever the keyboard and modifiers are doing. */
     var calibrating = false
         set(v) {
@@ -94,9 +102,29 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         pill.collapsed = true
         chord = KeyBarView(context, KeyBarView.CHORD, mods, 0, sink)
         val grip = Consumer<Int?> { dy ->
-            if (dy == null) save() else {
-                barY += dy
+            if (dy == null) {
+                // Let go. The pill pulled past the top goes away, as a picture-in-picture
+                // player does, and comes back with Show at the place it was picked up from.
+                val dismiss = collapsed && overshoot <= -DISMISS_DP * density
+                if (dragging) hideTarget()
+                dragging = false
+                if (dismiss) {
+                    barY = dragFrom
+                    onDismiss?.run()
+                } else save()
+            } else {
+                if (!dragging) {
+                    dragging = true
+                    dragFrom = barY
+                    overshoot = 0f
+                    if (collapsed) showTarget()
+                }
+                val want = barY + dy
+                barY = want
                 layoutBar()
+                // What the clamp took off an upward pull; a pull back down forgives it.
+                overshoot = if (dy > 0) 0f else overshoot + (want - barY)
+                if (collapsed) armTarget(overshoot <= -DISMISS_DP * density)
                 // Pinned, the grid stacks on the bar and rides along; on a keyboard it stays
                 // where the user lined it up with the keys.
                 if (!onKeyboard) layoutChord()
@@ -133,6 +161,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
         if (instance === this) instance = null
         aimView?.let { wm.removeView(it) }
         aimView = null
+        hideTarget()
         closeText()
         // An answer that arrives after this must not open a panel from a dead service.
         client.onText = null
@@ -262,6 +291,71 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             .putInt(Prefs.LEFT, (grid[2] / density).toInt())
             .putInt(Prefs.RIGHT, (grid[3] / density).toInt())
             .apply()
+    }
+
+    private var target: TargetView? = null
+
+    /**
+     * The dismiss target: a ring with a cross at the top of the screen, shown while the
+     * pill is dragged, filled once the pull has gone far enough past the top to count.
+     * Not touchable; the finger is on the pill.
+     */
+    private fun showTarget() {
+        if (target != null) return
+        val v = TargetView(context, Prefs.theme(context))
+        val size = (TARGET_DP * density).toInt()
+        val statusBottom = wm.currentWindowMetrics.windowInsets
+            .getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
+        val lp = WindowManager.LayoutParams(size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT)
+        lp.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        lp.y = statusBottom + (12 * density).toInt()
+        lp.windowAnimations = R.style.OverlayFade
+        if (add(v, lp)) target = v
+    }
+
+    private fun armTarget(armed: Boolean) {
+        val t = target ?: return
+        if (t.armed != armed) {
+            t.armed = armed
+            t.invalidate()
+            if (armed) t.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        }
+    }
+
+    private fun hideTarget() {
+        target?.let { wm.removeView(it) }
+        target = null
+    }
+
+    private class TargetView(context: Context, private val theme: Theme) : View(context) {
+        var armed = false
+        private val density = context.resources.displayMetrics.density
+        private val fill = Paint().apply { isAntiAlias = true }
+        private val line = Paint().apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            isAntiAlias = true
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val cx = width / 2f
+            val cy = height / 2f
+            val r = width / 2f - density
+            fill.color = if (armed) theme.accent else (theme.bg and 0xFFFFFF) or 0xD0000000.toInt()
+            canvas.drawCircle(cx, cy, r, fill)
+            line.color = if (armed) theme.bg else theme.fg
+            line.strokeWidth = density
+            canvas.drawCircle(cx, cy, r, line)
+            line.strokeWidth = 2.5f * density
+            val a = r * 0.4f
+            canvas.drawLine(cx - a, cy - a, cx + a, cy + a, line)
+            canvas.drawLine(cx - a, cy + a, cx + a, cy - a, line)
+        }
     }
 
     private val unshy = Runnable { shy(false) }
@@ -730,6 +824,9 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     companion object {
         private const val MIN_PX = 100
         private const val GRID_ROW_DP = 40
+        private const val TARGET_DP = 48
+        /** How far past the top a pull has to go, in dp, before letting go dismisses the pill. */
+        private const val DISMISS_DP = 32
 
         /** The live overlays, for the settings screen. */
         var instance: Overlays? = null
