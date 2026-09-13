@@ -32,6 +32,20 @@ and Shizuku. One module, `app`, written in Kotlin.
 - `ARCHITECTURE.md` documents the protocol and the reflection into hidden APIs. Keep it in step
   with the code; a change to the protocol or a hidden-API call updates it in the same commit.
 
+## Releasing
+
+Tag with an annotated tag and write the release notes as its message, because that message
+becomes the GitHub release body:
+
+```bash
+git tag -a v1.0.1 -m "What changed in this one" && git push origin v1.0.1
+```
+
+A plain `git tag v1.0.1` carries no message of its own, and the release is then created with a
+placeholder to be edited by hand rather than with whatever the tagged commit happened to say.
+The tag builds a signed APK and attaches it, but only if the signing secrets are set; without
+them the release step skips rather than publish a debug-signed build.
+
 ## Conventions
 
 - Match the surrounding code: comments explain why, not what, and they are full sentences. The

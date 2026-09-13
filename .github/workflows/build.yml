@@ -98,11 +98,42 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Needed only to read the tag object; fetch-depth 0 brings the tags with it.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           name: overkey-release
+
+      # Where the release notes come from. An annotated tag carries its own message, so that
+      # is used:
+      #
+      #     git tag -a v1.0.1 -m "What changed" && git push origin v1.0.1
+      #
+      # A lightweight tag (plain `git tag v1.0.1`) carries nothing, and its ref points at a
+      # commit, so anything reading the ref's contents gets that commit's message: an
+      # internal change nobody chose as the notes. Those get a placeholder to edit instead,
+      # which is why the object type is checked rather than whether the text is empty.
+      - name: Read the tag's own message
+        id: notes
+        run: |
+          kind=$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(objecttype)')
+          if [ "$kind" = "tag" ]; then
+            body=$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')
+          else
+            body="Overkey ${GITHUB_REF_NAME}. Release notes to follow."
+          fi
+          {
+            echo "body<<OVERKEY_EOF"
+            echo "$body"
+            echo "OVERKEY_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Attach the APK to the release
         uses: softprops/action-gh-release@v2
         with:
           files: app-release.apk
+          name: Overkey ${{ github.ref_name }}
+          body: ${{ steps.notes.outputs.body }}
