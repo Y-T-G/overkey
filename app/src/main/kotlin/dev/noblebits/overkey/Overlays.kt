@@ -404,9 +404,12 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     private fun clampBar() {
         val m = wm.currentWindowMetrics
         val statusBottom = m.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.statusBars()).top
+        // Folded, the thing on screen is the pill, drawn where the handle strip would be;
+        // it is what has to stay reachable, so it may go as high as the bar's top could.
+        val above = if (collapsed) barHeight() - bar.gripHeight / 2 - pill.pillHeight / 2 else 0
         val floor = m.bounds.height() - barHeight()
         val top = imeBounds.top - barHeight() // barTop() with barY = 0
-        barY = barY.coerceIn(statusBottom - top, maxOf(statusBottom - top, floor - top))
+        barY = barY.coerceIn(statusBottom - top - above, maxOf(statusBottom - top - above, floor - top))
     }
 
     private fun layoutBar() {
