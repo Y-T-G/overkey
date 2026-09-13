@@ -20,8 +20,11 @@ val keystoreProps = Properties().apply {
 fun signing(name: String, env: String): String? =
     keystoreProps.getProperty(name)?.takeIf { it.isNotBlank() } ?: System.getenv(env)?.takeIf { it.isNotBlank() }
 
+// Relative paths are read from the repository root, where the keystore sits beside
+// keystore.properties; an absolute one (what CI passes) is taken as it is.
 val keyStorePath = signing("storeFile", "OVERKEY_STORE_FILE")
-val signedForRelease = keyStorePath != null && file(keyStorePath).exists()
+val keyStoreFile = keyStorePath?.let { rootProject.file(it) }
+val signedForRelease = keyStoreFile != null && keyStoreFile.exists()
 
 android {
     namespace = "dev.noblebits.overkey"
@@ -37,7 +40,7 @@ android {
     signingConfigs {
         if (signedForRelease) {
             create("release") {
-                storeFile = file(keyStorePath!!)
+                storeFile = keyStoreFile
                 storePassword = signing("storePassword", "OVERKEY_STORE_PASSWORD")
                 keyAlias = signing("keyAlias", "OVERKEY_KEY_ALIAS")
                 keyPassword = signing("keyPassword", "OVERKEY_KEY_PASSWORD")
