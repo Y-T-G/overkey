@@ -119,11 +119,22 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                     overshoot = 0f
                     if (collapsed) showTarget()
                 }
-                val want = barY + dy
+                // How far the finger has pulled past the clamp, kept so the gesture is
+                // symmetric: coming back down pays that pull back before the bar itself
+                // moves, the way a picture-in-picture player does. Forgetting it on any
+                // downward movement meant a wobble out of the target and back in left the
+                // pull at nothing, so the target would not light up a second time.
+                var move = dy.toFloat()
+                if (move > 0f && overshoot < 0f) {
+                    val give = minOf(move, -overshoot)
+                    overshoot += give
+                    move -= give
+                }
+                val want = barY + move.toInt()
                 barY = want
                 layoutBar()
-                // What the clamp took off an upward pull; a pull back down forgives it.
-                overshoot = if (dy > 0) 0f else overshoot + (want - barY)
+                // What the clamp took off an upward pull.
+                overshoot += (want - barY).toFloat()
                 if (collapsed) armTarget(overshoot <= -DISMISS_DP * density)
                 // Pinned, the grid stacks on the bar and rides along; on a keyboard it stays
                 // where the user lined it up with the keys.
