@@ -19,3 +19,7 @@ keystore.properties
 .kotlin/
 tools/work/
 __pycache__/
+
+# The store-asset review page, built by tools/build-store-page.py with every image
+# inlined. A local artifact for checking the listing, not part of the app.
+docs/store/review-page.html
