@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">Overkey</string>
+    <!-- How the share target names itself in another app's share sheet. -->
+    <string name="share_label">Copy to clipboard</string>
 </resources>

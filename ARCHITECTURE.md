@@ -5,13 +5,16 @@ Modifier and navigation keys floating over whatever on-screen keyboard is in use
 ## File Map
 
 ```
-├── MainActivity.kt      Setup, delivery status, theme, sliders, calibration (programmatic UI, plain style)
+├── MainActivity.kt      Setup, delivery status, theme, sliders, calibration (programmatic UI)
+├── HelpActivity.kt      The Help screen, opened from settings, documenting the non-obvious features
 ├── WordmarkView.kt      The app name drawn with the icon's extrusion; also the shared light vector and blend()
 ├── Overlays.kt          The bar, its pill, the chord grid and aim mode: layout, modifiers, calibration, delivery
 ├── OverlayService.kt    Foreground service that polls the keyboard's insets, runs Overlays, owns the notification
 ├── BootReceiver.kt      Starts the service after a reboot or an update
 ├── KeyBarView.kt        KeySink, Key, Mods (sticky modifier state), KeyBarView (one canvas per overlay)
 ├── Prefs.kt             Themes table and SharedPreferences keys
+├── ClipProvider.kt      Serves what Overkey puts on the clipboard (a copied picture or a shared file)
+├── ShareActivity.kt     Share target: anything sent to Overkey goes on the clipboard for Ctrl+V
 ├── InjectorClient.kt    Loopback client for the injector: handshake, root launch, adb command, probe
 ├── Injector.kt          The injector: app_process entry point, key and mouse injection, volume key watcher
 └── ShizukuInjector.kt   Shizuku user service that runs Injector.main as shell
@@ -21,10 +24,10 @@ tools/build-store-page.py     docs/store/review-page.html from docs/store/listin
 docs/store/                   The Play listing: listing.md is the source, the rest is built
 ```
 
-The site page, `noblebits.dev/overkey/`, lives in the noblebits.dev repository under
-`server/public/overkey/` with the rest of the site (Firebase hosting, deployed by that
-repository's workflow on push). Its `demo.js` reimplements `Mods` for the bar on the page;
-change one and change the other.
+The site page, `noblebits.dev/overkey/`, lives in the `noblebits.dev` repository under
+`public/overkey/` with the rest of the site (Firebase hosting, deployed by that repository's
+workflow on push). Its `demo.js` reimplements `Mods` for the bar on the page; change one and
+change the other.
 
 ## Permissions
 

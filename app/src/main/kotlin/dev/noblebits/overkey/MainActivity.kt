@@ -193,28 +193,9 @@ class MainActivity : Activity() {
         }
 
         header("Help")
-        help("Modifiers", "Tap Ctrl, Alt, Shift or Meta and it stays down for the next key. " +
-            "Long-press to lock it until you tap it again. Hold one and tap another key for a " +
-            "chord. Arrows and the other keys repeat while held.")
-        help("The grid", "With Ctrl, Alt or Meta down, a grid of letters appears over the " +
-            "keyboard: tap C there for Ctrl+C. It is there because the keyboard's own letters " +
-            "type text rather than press keys, so they cannot join a chord. Shift works with the " +
-            "arrows to select.")
-        help("The handle", "The strip under the keys. Drag it to move the bar. Tap to fold the " +
-            "bar away to a pill, tap the pill to bring it back. Drag the pill up past the top of " +
-            "the screen, onto the cross, to put everything away; Show in the notification brings " +
-            "it back. Long-press for aim mode.")
-        help("Aim mode", "The screen dims and takes one gesture, sent as a mouse through the " +
-            "helper. Tap: a click there, which gives an image in a browser the focus that Ctrl+C " +
-            "needs. Drag: a mouse drag, replayed when you lift, which selects text in a browser " +
-            "instead of scrolling. Hold: a menu. Right click opens what a mouse would, Copy image " +
-            "on a browser image. Select text lifts the text under your finger into a panel where " +
-            "you can select part of it and copy, for a chat message or anything else that only " +
-            "copies whole. Copy image puts the picture under your finger on the clipboard as it " +
-            "appears on screen. A second finger cancels.")
-        help("The notification", "Pin puts the bar up with no keyboard, for Ctrl+Z or the arrows " +
-            "on a screen with no text field; the grid stacks on it, above or below as fits. Hide takes everything off " +
-            "the screen while the volume keys keep working.")
+        row("How it all works", "Modifiers, the grid, aim mode, sharing and the rest", "OPEN") {
+            startActivity(Intent(this, HelpActivity::class.java))
+        }
 
         setContentView(ScrollView(this).apply {
             clipToPadding = false
@@ -332,7 +313,7 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    // Building blocks in a plain settings style: black page, dark surfaces, gray copy, accent text actions.
+    // Building blocks: black page, dark surfaces, gray copy, accent text actions.
 
     private fun px(v: Int) = (v * dp).toInt()
 
@@ -357,14 +338,6 @@ class MainActivity : Activity() {
         root.addView(label(s, 12f, gray).apply { setLineSpacing(0f, 1.2f) }, lp(top = 8))
     }
 
-    /** One card in the Help section: a title and how the thing works. */
-    private fun help(title: String, body: String) {
-        surface().apply {
-            addView(label(title, 14f, white))
-            addView(label(body, 12f, gray).apply { setLineSpacing(0f, 1.2f) }, lp(top = 4))
-        }
-    }
-
     private fun surface() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = card()
@@ -373,7 +346,7 @@ class MainActivity : Activity() {
     }
 
     /**
-     * a plinth: one solid copy of the card's shape pushed down and to the right by
+     * A plinth: one solid copy of the card's shape pushed down and to the right by
      * [LIFT] dp along a fixed light vector, coloured with the accent pulled toward the surface,
      * plus a 1dp rim that shows only along the top-left edge. The face itself stays flat.
      */

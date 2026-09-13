@@ -26,6 +26,31 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".HelpActivity"
+            android:exported="false"
+            android:label="Help"
+            android:parentActivityName=".MainActivity" />
+
+        <!-- Share target: anything sent to Overkey from another app's share sheet goes on the
+             clipboard, so the next Ctrl+V pastes it. No window of its own, so it is translucent
+             and finishes at once. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:label="@string/share_label"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
 
         <service
             android:name=".OverlayService"
@@ -45,7 +70,8 @@
             </intent-filter>
         </receiver>
 
-        <!-- The picture aim mode copied, for whatever pastes it. -->
+        <!-- What Overkey has put on the clipboard, a copied picture or a shared file, for
+             whatever pastes it. -->
         <provider
             android:name=".ClipProvider"
             android:authorities="${applicationId}.clip"
