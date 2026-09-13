@@ -111,6 +111,11 @@ def write_prefs(text):
     adb('push', local, '/data/local/tmp/prefs.xml')
     owner = sh(f'su -c "stat -c %U /data/data/{PKG}"').strip()
     sh(f'su -c "cp /data/local/tmp/prefs.xml {XML} && chown {owner}:{owner} {XML} && chmod 660 {XML} && restorecon {XML}"')
+    # These preferences carry the token the injector is authenticated with, so neither copy is
+    # left lying about once it is in place. Only .gitignore stood between the one under
+    # tools/work and a commit.
+    sh('su -c "rm -f /data/local/tmp/prefs.xml"')
+    os.remove(local)
     time.sleep(1)
     sh(f'su -c "am start-foreground-service -n {PKG}/.OverlayService"')
     time.sleep(3)

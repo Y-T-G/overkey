@@ -43,7 +43,10 @@ android {
                 storeFile = keyStoreFile
                 storePassword = signing("storePassword", "OVERKEY_STORE_PASSWORD")
                 keyAlias = signing("keyAlias", "OVERKEY_KEY_ALIAS")
+                // A keystore whose key carries the store's own password needs only three
+                // properties, so the fourth is optional.
                 keyPassword = signing("keyPassword", "OVERKEY_KEY_PASSWORD")
+                    ?: signing("storePassword", "OVERKEY_STORE_PASSWORD")
             }
         }
     }
