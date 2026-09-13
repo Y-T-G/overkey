@@ -16,22 +16,25 @@ import java.util.concurrent.atomic.AtomicLong
  * Serves whatever is on Overkey's clipboard, `content://<pkg>.clip/clip-<n>.<ext>`, from the
  * cache directory. Not exported; the clipboard grants the pasting app a read on the URI while
  * it holds the clip. Hand-rolled rather than androidx FileProvider: the app has no androidx,
- * and this is all a paste needs, the bytes and a name and size for apps that ask.
+ * and this is all a paste needs, the bytes and a name and type for apps that ask.
  *
  * Two things put files here: aim mode's Copy image (a PNG) and a share into the app
- * ([ShareActivity], any of the media types below). Each copy clears the older files and takes
- * a fresh name, so a paste in progress is never torn. The served type comes from the file's
- * extension, which is fixed to one of [EXT_MIME]; anything else is refused, so the provider
- * can only ever hand out a known media type from its own cache directory.
+ * ([ShareActivity], anything at all). The file on disk is always named `clip-<digits>.<ext>`,
+ * which is what makes the path safe to serve; the type and the name the pasting app is told
+ * are kept beside it in [NOTES] instead of being guessed from the extension. That matters:
+ * a zip handed out as `clip-1.bin` of type `application/octet-stream` is refused by the app
+ * pasting it, while the same bytes as `holiday.zip` of type `application/zip` are taken.
  */
 class ClipProvider : ContentProvider() {
     override fun onCreate() = true
 
-    override fun getType(uri: Uri) = if (valid(uri)) mimeOf(uri.lastPathSegment!!) else null
+    override fun getType(uri: Uri) = if (valid(uri)) mimeOf(context!!, uri.lastPathSegment!!) else null
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         if (!valid(uri) || mode != "r") return null
-        return ParcelFileDescriptor.open(file(context!!, uri.lastPathSegment!!), ParcelFileDescriptor.MODE_READ_ONLY)
+        val f = file(context!!, uri.lastPathSegment!!)
+        if (!f.isFile) return null
+        return ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     override fun query(uri: Uri, projection: Array<String>?, selection: String?, args: Array<String>?, order: String?): Cursor? {
@@ -40,9 +43,12 @@ class ClipProvider : ContentProvider() {
         val cols = projection ?: arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE)
         val c = MatrixCursor(cols, 1)
         val f = file(context!!, name)
+        // A name that is no longer on disk is not a row: a caller that checks before opening
+        // should see nothing rather than a file of length zero.
+        if (!f.isFile) return c
         c.addRow(cols.map { col ->
             when (col) {
-                OpenableColumns.DISPLAY_NAME -> name
+                OpenableColumns.DISPLAY_NAME -> displayOf(context!!, name)
                 OpenableColumns.SIZE -> f.length()
                 else -> null
             }
@@ -55,47 +61,80 @@ class ClipProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, args: Array<String>?) = 0
 
     companion object {
-        private val NAME = Regex("clip-\\d+\\.[a-z0-9]{1,5}")
+        // The only shape served. Matched whole, on a single decoded path segment, so no name
+        // can climb out of the cache directory.
+        private val NAME = Regex("clip-\\d+\\.[A-Za-z0-9]{1,8}")
+        private val EXT = Regex("[A-Za-z0-9]{1,8}")
+        // "type/subtype", the characters RFC 2045 allows in a token.
+        private val MIME = Regex("[A-Za-z0-9!#$&^_.+-]{1,64}/[A-Za-z0-9!#$&^_.+-]{1,64}")
+        private const val NOTES = "clips"
+        private const val FALLBACK = "application/octet-stream"
         private val counter = AtomicLong(0)
 
-        // The only extensions the provider will serve, each with the type it is served as.
-        // A shared file whose type is not one of these is stored as ".bin" and paste is left
-        // to the receiving app, which is what "media that can be clipboarded" already means.
-        private val EXT_MIME = linkedMapOf(
-            "png" to "image/png", "jpg" to "image/jpeg", "gif" to "image/gif",
-            "webp" to "image/webp", "bmp" to "image/bmp", "heic" to "image/heic",
-            "mp4" to "video/mp4", "webm" to "video/webm", "3gp" to "video/3gpp", "mkv" to "video/x-matroska",
-            "mp3" to "audio/mpeg", "m4a" to "audio/mp4", "ogg" to "audio/ogg", "wav" to "audio/wav", "opus" to "audio/opus",
-            "pdf" to "application/pdf", "txt" to "text/plain",
-            "bin" to "application/octet-stream"
+        /** A guess at the extension only, for the name on disk; the type served is [note]d. */
+        private val EXT_OF_MIME = mapOf(
+            "image/png" to "png", "image/jpeg" to "jpg", "image/gif" to "gif",
+            "image/webp" to "webp", "image/bmp" to "bmp", "image/heic" to "heic",
+            "video/mp4" to "mp4", "video/webm" to "webm", "video/3gpp" to "3gp",
+            "audio/mpeg" to "mp3", "audio/mp4" to "m4a", "audio/ogg" to "ogg",
+            "audio/wav" to "wav", "application/pdf" to "pdf", "application/zip" to "zip",
+            "text/plain" to "txt",
         )
 
-        private fun mimeOf(name: String) = EXT_MIME[name.substringAfterLast('.')] ?: "application/octet-stream"
+        private fun notes(c: Context) = c.getSharedPreferences(NOTES, Context.MODE_PRIVATE)
 
-        /** One path segment of the served shape, with a known extension; anything else is refused. */
+        /** One path segment of the served shape; anything else, traversal included, is refused. */
         private fun valid(uri: Uri): Boolean {
             val name = uri.lastPathSegment ?: return false
-            return uri.pathSegments.size == 1 && NAME.matches(name) && EXT_MIME.containsKey(name.substringAfterLast('.'))
+            return uri.pathSegments.size == 1 && NAME.matches(name)
         }
 
         fun file(c: Context, name: String) = File(c.cacheDir, name)
         fun uri(c: Context, name: String): Uri = Uri.parse("content://${c.packageName}.clip/$name")
 
-        /** The extension to store a file of type [mime] under, so it is served back as that type. */
-        fun ext(mime: String?): String = EXT_MIME.entries.firstOrNull { it.value == mime }?.key ?: "bin"
-
-        /** Deletes every clip file. Called before the first name of a new copy. */
-        fun clear(c: Context) {
-            c.cacheDir.listFiles()?.forEach { if (NAME.matches(it.name)) it.delete() }
+        /**
+         * The extension to store a file under. The name the sender gave it is the best source,
+         * because it is what the sender's own app chose; the type is the fallback.
+         */
+        fun ext(display: String?, mime: String?): String {
+            val fromName = display?.substringAfterLast('.', "")?.lowercase()
+            if (fromName != null && fromName.isNotEmpty() && EXT.matches(fromName)) return fromName
+            return EXT_OF_MIME[mime?.lowercase()] ?: "bin"
         }
 
-        /** A unique name of the given type, without clearing; for the later items of one copy. */
+        /** A unique name of the given type. Unique across a boot, and within one copy. */
         fun name(ext: String) = "clip-${SystemClock.elapsedRealtime() * 1000 + (counter.incrementAndGet() % 1000)}.$ext"
 
-        /** A name for the next copy; the earlier copies are deleted first. */
-        fun fresh(c: Context, ext: String = "png"): String {
-            clear(c)
-            return name(ext)
+        /**
+         * Records what the pasting app should be told about [name]: the type the sender gave it
+         * and the name the sender called it. Without this a paste gets the extension's guess,
+         * which for anything outside the table above is "a nameless blob of bytes".
+         */
+        fun note(c: Context, name: String, mime: String?, display: String?) {
+            val type = if (mime != null && MIME.matches(mime)) mime else FALLBACK
+            // Only the last segment, and nothing that could be read as a path.
+            val shown = display?.substringAfterLast('/')?.substringAfterLast('\\')
+                ?.filter { it.code >= 0x20 }?.take(120)?.ifBlank { null } ?: name
+            notes(c).edit().putString("$name.mime", type).putString("$name.name", shown).apply()
+        }
+
+        fun mimeOf(c: Context, name: String): String = notes(c).getString("$name.mime", null) ?: FALLBACK
+
+        fun displayOf(c: Context, name: String): String = notes(c).getString("$name.name", null) ?: name
+
+        /**
+         * Deletes every clip file except [keep], and the notes that went with them. Called once
+         * the replacements are on disk, so a copy that fails leaves the last good clip pasteable.
+         */
+        fun sweep(c: Context, keep: Set<String>) {
+            val e = notes(c).edit()
+            c.cacheDir.listFiles()?.forEach {
+                if (NAME.matches(it.name) && it.name !in keep) {
+                    it.delete()
+                    e.remove("${it.name}.mime").remove("${it.name}.name")
+                }
+            }
+            e.apply()
         }
     }
 }

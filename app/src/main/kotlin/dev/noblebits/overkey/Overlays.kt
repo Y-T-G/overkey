@@ -133,8 +133,11 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                 val want = barY + move.toInt()
                 barY = want
                 layoutBar()
-                // What the clamp took off an upward pull.
-                overshoot += (want - barY).toFloat()
+                // What the top clamp took off an upward pull. Only that: the floor clamp holds
+                // the bar on a downward drag too, and counting that would build a positive debt
+                // nothing ever pays back, leaving the cross unable to arm afterwards.
+                val taken = (want - barY).toFloat()
+                if (taken < 0f) overshoot += taken
                 if (collapsed) armTarget(overshoot <= -DISMISS_DP * density)
                 // Pinned, the grid stacks on the bar and rides along; on a keyboard it stays
                 // where the user lined it up with the keys.
@@ -629,13 +632,17 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
     private fun copyImage(png: ByteArray) {
         // A fresh name each time: an app still reading the last clip would get a torn file
         // if it were overwritten, and image caches keyed on the URI would show the old one.
-        val name = ClipProvider.fresh(context)
+        val name = ClipProvider.name("png")
         try {
             ClipProvider.file(context, name).writeBytes(png)
         } catch (_: java.io.IOException) {
+            ClipProvider.file(context, name).delete()
             toast("Could not save the image")
             return
         }
+        ClipProvider.note(context, name, "image/png", "screenshot.png")
+        // The older clips go only now, so a failure above leaves the last one pasteable.
+        ClipProvider.sweep(context, setOf(name))
         val uri = ClipProvider.uri(context, name)
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newUri(context.contentResolver, "image", uri))

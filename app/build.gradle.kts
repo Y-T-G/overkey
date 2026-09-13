@@ -1,7 +1,27 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
 }
+
+/*
+ * The real signing key, from keystore.properties beside this file or from the environment on
+ * CI. Neither is tracked. Without one the release build falls back to the debug key, so a fresh
+ * clone still builds and can be installed; an APK signed that way must never be published,
+ * because the debug key is generated per machine and the next build would not install over it.
+ * `signedForRelease` is what CI asks before attaching an APK to a GitHub release.
+ */
+val keystoreProps = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun signing(name: String, env: String): String? =
+    keystoreProps.getProperty(name)?.takeIf { it.isNotBlank() } ?: System.getenv(env)?.takeIf { it.isNotBlank() }
+
+val keyStorePath = signing("storeFile", "OVERKEY_STORE_FILE")
+val signedForRelease = keyStorePath != null && file(keyStorePath).exists()
 
 android {
     namespace = "dev.noblebits.overkey"
@@ -14,6 +34,17 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        if (signedForRelease) {
+            create("release") {
+                storeFile = file(keyStorePath!!)
+                storePassword = signing("storePassword", "OVERKEY_STORE_PASSWORD")
+                keyAlias = signing("keyAlias", "OVERKEY_KEY_ALIAS")
+                keyPassword = signing("keyPassword", "OVERKEY_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = true
@@ -24,7 +55,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             vcsInfo.include = false
         }
     }

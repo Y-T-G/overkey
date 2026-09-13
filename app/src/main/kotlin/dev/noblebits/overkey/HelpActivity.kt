@@ -174,6 +174,7 @@ class HelpActivity : Activity() {
     companion object {
         private const val LIFT = 3
         // Key combos first so "Ctrl+C" is one keycap, then the standalone modifier and nav keys.
-        private val KEYS = Regex("Ctrl\\+[A-Z]|Ctrl|Alt|Meta|Shift|Esc|Tab|Home|End|Page Up|Page Down")
+        private val KEYS = Regex(
+            "\\bCtrl\\+[A-Z]\\b|\\b(?:Ctrl|Alt|Meta|Shift|Esc|Tab|Home|End|Page Up|Page Down)\\b")
     }
 }

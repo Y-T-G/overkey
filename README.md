@@ -87,9 +87,22 @@ You need a JDK 17 and the Android SDK. Then:
 ./gradlew assembleRelease
 ```
 
-The APK is written to `app/build/outputs/apk/release/`. The release build here is signed with the
-debug key so a fresh clone builds without a keystore; a real signing config is expected to come
-from CI or a local `keystore.properties`.
+The APK is written to `app/build/outputs/apk/release/`.
+
+With no keystore the release build is signed with the debug key, so a fresh clone builds and
+installs without any setup. That key is generated per machine, so an APK signed with it is for
+trying the app, not for giving to anyone: the next machine's build will not install over it. To
+sign properly, put a `keystore.properties` next to `settings.gradle.kts` (it is not tracked):
+
+```properties
+storeFile=/path/to/release.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+CI reads the same four values from the environment instead, and only attaches an APK to a GitHub
+release when they are set.
 
 ## Privacy
 
