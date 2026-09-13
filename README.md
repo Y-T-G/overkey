@@ -79,6 +79,11 @@ to support the work, not a way to get anything the free builds lack.
 
 Android 11 (API 30) and up. The download is about 75 KB.
 
+The builds are signed with different keys: the Play one by Google, through Play App Signing, and
+the ones here with our own key. Android will not update an app across a change of signing key, so
+switching from one source to the other means uninstalling first. The app is the same either way;
+only the signature differs.
+
 ## Build from source
 
 You need a JDK 17 and the Android SDK. Then:
