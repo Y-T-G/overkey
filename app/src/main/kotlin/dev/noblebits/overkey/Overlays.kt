@@ -491,7 +491,10 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
      * element focus the way a pointer click does, which is what Ctrl+C on an image in a
      * browser needs; a touch drag scrolls where a mouse drag selects; and a message in a chat
      * app is selectable by no pointer at all, only whole by long press. A second finger
-     * cancels.
+     * cancels. The one gesture that stays a finger's is a double tap that drags: replayed as
+     * a touch, at the finger's own pace, it scrolls and flings the way it would with no
+     * aim mode at all, for getting the target on screen. A double tap in place is a
+     * double click.
      *
      * Replayed rather than live because the finger is still down on this window: on Android
      * before 14 the dispatcher allows one pointer device at a time, and a mouse DOWN injected
@@ -499,7 +502,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
      */
     private fun aim() {
         if (aimView != null) return
-        val v = AimView(context, Prefs.theme(context)) { button, path ->
+        val v = AimView(context, Prefs.theme(context)) { button, path, times ->
             aimView?.let { wm.removeView(it) }
             aimView = null
             if (button == AimView.CANCEL) return@AimView
@@ -520,7 +523,20 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             // View.postDelayed: a detached view (the bar, while collapsed) holds the runnable
             // until it is attached again.
             handler.postDelayed({
-                if (button == AimView.DRAG) client.drag(thin(path, 32)) else client.click(path[0], path[1], button)
+                when (button) {
+                    AimView.DRAG -> client.drag(thin(path, 32))
+                    // More points than a drag, and their times: a scroll's feel, and
+                    // whether it flings, is in the pace of the finger.
+                    AimView.SWIPE -> {
+                        val keep = spread(path.size / 2, 64)
+                        client.swipe(IntArray(keep.size * 2) { path[2 * keep[it / 2] + it % 2] }, IntArray(keep.size) { times[keep[it]] })
+                    }
+                    AimView.DOUBLE -> {
+                        client.click(path[0], path[1], AimView.LEFT)
+                        client.click(path[0], path[1], AimView.LEFT)
+                    }
+                    else -> client.click(path[0], path[1], button)
+                }
             }, 150)
         }
         val lp = WindowManager.LayoutParams(
@@ -653,25 +669,29 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
 
     /** At most [n] of the x,y pairs in [path], evenly spaced, the first and last kept. */
     private fun thin(path: IntArray, n: Int): IntArray {
-        val pairs = path.size / 2
-        if (pairs <= n) return path
-        val out = IntArray(n * 2)
-        for (i in 0 until n) {
-            val j = i * (pairs - 1) / (n - 1)
-            out[2 * i] = path[2 * j]
-            out[2 * i + 1] = path[2 * j + 1]
-        }
-        return out
+        val keep = spread(path.size / 2, n)
+        return IntArray(keep.size * 2) { path[2 * keep[it / 2] + it % 2] }
+    }
+
+    /** The indices of at most [n] out of [count] items, evenly spaced, the first and last kept. */
+    private fun spread(count: Int, n: Int): IntArray {
+        if (count <= n) return IntArray(count) { it }
+        return IntArray(n) { it * (count - 1) / (n - 1) }
     }
 
     /**
      * Full-screen tint that reports one gesture: [done] gets the button ([LEFT], [RIGHT],
-     * [DRAG], [TEXT] or [CANCEL]) and the touched screen points as x,y pairs, first to last.
-     * A drag draws its trail so the finger can see where the pointer will go. A long press
-     * opens a two-way menu at the finger, right click or select text; the next tap picks one,
-     * anywhere else cancels.
+     * [DRAG], [SWIPE], [DOUBLE], [TEXT], [IMAGE] or [CANCEL]), the touched screen points as
+     * x,y pairs, first to last, and for each point its time since the touch began in ms. A
+     * drag draws its trail so the finger can see where the pointer will go. A long press
+     * opens a menu at the finger, right click, select text or copy image; the next tap picks
+     * one, anywhere else cancels.
+     *
+     * A tap is not reported until the double-tap window has passed with no second touch: a
+     * second tap that goes on to drag is a [SWIPE], a finger's own scroll rather than the
+     * mouse's selection, and a second tap that lifts in place is a [DOUBLE] click.
      */
-    private class AimView(context: Context, private val theme: Theme, private val done: (Int, IntArray) -> Unit) : View(context) {
+    private class AimView(context: Context, private val theme: Theme, private val done: (Int, IntArray, IntArray) -> Unit) : View(context) {
         private val density = context.resources.displayMetrics.density
         private val tint = Paint().apply { color = 0x30000000 }
         private val ink = Paint().apply {
@@ -682,6 +702,8 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             strokeJoin = Paint.Join.ROUND
             isAntiAlias = true
         }
+        // A swipe's trail in the accent, so the finger knows it is scrolling, not selecting.
+        private val swipeInk = Paint(ink).apply { color = theme.accent }
         private val fill = Paint().apply { color = theme.bg; isAntiAlias = true }
         private val rim = Paint().apply {
             color = theme.accent
@@ -696,13 +718,25 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             isAntiAlias = true
         }
         private val slop = ViewConfiguration.get(context).scaledTouchSlop
+        private val doubleSlop = ViewConfiguration.get(context).scaledDoubleTapSlop
+        private val doubleTapMs = ViewConfiguration.getDoubleTapTimeout().toLong()
         private val points = ArrayList<Int>()
+        private val times = ArrayList<Int>()
         private val trail = Path()
         private var downX = 0f // where the finger went down, in view coordinates
         private var downY = 0f
+        private var downAt = 0L // when, in event time
         private var moved = false
         private var over = false // reported; the rest of this gesture is nobody's
         private var menu = false // the long-press menu is up; the next tap chooses
+        private var swipe = false // this touch began as the second tap of a double tap
+        private var tapped = false // a tap lifted and waits out the double-tap window
+        private var tapX = 0f // where that tap was, in view coordinates
+        private var tapY = 0f
+        private val tap = Runnable {
+            tapped = false
+            finish(LEFT)
+        }
         private val items = arrayOf("Right click", "Select text", "Copy image")
         private val choices = intArrayOf(RIGHT, TEXT, IMAGE)
         private val boxes = Array(items.size) { RectF() } // in view coordinates
@@ -756,12 +790,19 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             over = true
             menu = false
             removeCallbacks(hold)
-            done(button, points.toIntArray())
+            removeCallbacks(tap)
+            done(button, points.toIntArray(), times.toIntArray())
+        }
+
+        private fun record(e: MotionEvent) {
+            points.add(e.rawX.toInt())
+            points.add(e.rawY.toInt())
+            times.add((e.eventTime - downAt).toInt())
         }
 
         override fun onDraw(canvas: Canvas) {
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), tint)
-            if (moved) canvas.drawPath(trail, ink)
+            if (moved) canvas.drawPath(trail, if (swipe) swipeInk else ink)
             if (menu) for (i in items.indices) {
                 val b = boxes[i]
                 val r = b.height() / 2
@@ -780,16 +821,29 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                         finish(if (i < 0) CANCEL else choices[i])
                         return true
                     }
+                    if (tapped) {
+                        // A second touch close to the first tap makes a double tap; one
+                        // elsewhere means the first was a click after all, which goes now,
+                        // and this touch is nobody's.
+                        removeCallbacks(tap)
+                        tapped = false
+                        if (Math.abs(e.x - tapX) > doubleSlop || Math.abs(e.y - tapY) > doubleSlop) {
+                            finish(LEFT)
+                            return true
+                        }
+                        swipe = true
+                    } else swipe = false
                     points.clear()
-                    points.add(e.rawX.toInt())
-                    points.add(e.rawY.toInt())
+                    times.clear()
+                    downAt = e.eventTime
+                    record(e)
                     downX = e.x
                     downY = e.y
                     trail.reset()
                     trail.moveTo(e.x, e.y)
                     moved = false
                     over = false
-                    postDelayed(hold, 500)
+                    if (!swipe) postDelayed(hold, 500)
                 }
                 MotionEvent.ACTION_POINTER_DOWN -> finish(CANCEL)
                 MotionEvent.ACTION_MOVE -> if (!over) {
@@ -798,14 +852,25 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
                         removeCallbacks(hold)
                     }
                     if (moved) {
-                        points.add(e.rawX.toInt())
-                        points.add(e.rawY.toInt())
+                        record(e)
                         trail.lineTo(e.x, e.y)
                         invalidate()
                     }
                 }
                 // The long press's own lift, with the menu up, is not the choice.
-                MotionEvent.ACTION_UP -> if (!menu) finish(if (moved) DRAG else LEFT)
+                MotionEvent.ACTION_UP -> if (!menu && !over) {
+                    removeCallbacks(hold)
+                    if (moved) finish(if (swipe) SWIPE else DRAG)
+                    else if (swipe) finish(DOUBLE)
+                    else {
+                        // A click only once no second tap has come: the wait is what a
+                        // double tap costs, the same as anywhere else on the phone.
+                        tapped = true
+                        tapX = e.x
+                        tapY = e.y
+                        postDelayed(tap, doubleTapMs)
+                    }
+                }
                 MotionEvent.ACTION_CANCEL -> if (!menu) finish(CANCEL)
             }
             return true
@@ -813,6 +878,7 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
 
         override fun onDetachedFromWindow() {
             removeCallbacks(hold)
+            removeCallbacks(tap)
             super.onDetachedFromWindow()
         }
 
@@ -823,6 +889,8 @@ class Overlays(private val context: Context, private val onLost: Runnable) {
             const val DRAG = 3
             const val TEXT = 4
             const val IMAGE = 5
+            const val SWIPE = 6
+            const val DOUBLE = 7
         }
     }
 

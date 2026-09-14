@@ -40,7 +40,9 @@ import javax.crypto.spec.SecretKeySpec
  * itself never crosses the socket and a process squatting the port learns nothing. Then one
  * text line per event: "action keycode metaState repeat", or "m x y button" for a mouse click,
  * or a drag as "d x y" (left button down there), "t x y" lines along the way and "u" (up).
- * "x x y" asks for the text under a point and is answered with "x <base64 utf-8>", empty when
+ * A finger's swipe is "f x y" (touch down there), "t x y ms" lines, each sent at ms after
+ * the touch began, and "u". "x x y" asks for the text under a point and is answered with
+ * "x <base64 utf-8>", empty when
  * there is none; "i x y" for the picture there, answered "i <base64 png>". "g <mask>" names
  * the volume keys to keep from the system. The other way, the injector sends "v <mask>"
  * whenever a volume key goes down or up, bit 0 for Vol- and bit 1 for Vol+: root and shell
@@ -49,7 +51,7 @@ import javax.crypto.spec.SecretKeySpec
 object Injector {
     const val PORT = 27301
     /** Bumped whenever the protocol changes; a running injector with another version is stale. */
-    const val VERSION = 6
+    const val VERSION = 7
     private const val NONCE = 16
     private const val MAC = 32
 
@@ -354,8 +356,14 @@ object Injector {
                     if (parse(line.substring(2), p, 2)) mouse.press(p[0].toFloat(), p[1].toFloat())
                     continue
                 }
+                if (line.startsWith("f ")) {
+                    if (parse(line.substring(2), p, 2)) mouse.touch(p[0].toFloat(), p[1].toFloat())
+                    continue
+                }
                 if (line.startsWith("t ")) {
-                    if (parse(line.substring(2), p, 2)) mouse.move(p[0].toFloat(), p[1].toFloat())
+                    val rest = line.substring(2)
+                    if (parse(rest, p, 3)) mouse.move(p[0].toFloat(), p[1].toFloat(), p[2].toLong())
+                    else if (parse(rest, p, 2)) mouse.move(p[0].toFloat(), p[1].toFloat())
                     continue
                 }
                 if (line == "u") {
@@ -452,10 +460,12 @@ object Injector {
     }
 
     /**
-     * One client's mouse. A desktop-style click gives apps the focus and selection semantics
-     * of a real pointer (an image in a browser becomes the thing Ctrl+C copies), which a
-     * touch tap does not. A click is down with the button, a press, a release, up; a drag
-     * keeps the button held across moves until the release.
+     * One client's pointer, a mouse or, for a swipe, a finger. A desktop-style click gives
+     * apps the focus and selection semantics of a real pointer (an image in a browser
+     * becomes the thing Ctrl+C copies), which a touch tap does not. A click is down with
+     * the button, a press, a release, up; a drag keeps the button held across moves until
+     * the release. A finger is down, moves and up with no buttons at all, which is what
+     * scrolls.
      */
     private class Mouse(private val im: Any, private val inject: java.lang.reflect.Method) {
         private val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE })
@@ -463,7 +473,9 @@ object Injector {
         // setActionButton is hidden; this process is not subject to the hidden API list.
         private val setActionButton = MotionEvent::class.java.getMethod("setActionButton", Integer.TYPE)
         private var downTime = 0L
-        private var held = 0 // the button down for a drag in progress, else 0
+        private var down = false // a drag or swipe in progress
+        private var held = 0 // the button down for it, 0 for a finger
+        private var finger = false
 
         fun click(x: Float, y: Float, button: Int) {
             release()
@@ -473,36 +485,65 @@ object Injector {
         }
 
         fun press(x: Float, y: Float, state: Int = MotionEvent.BUTTON_PRIMARY) {
-            release()
-            coords[0].x = x
-            coords[0].y = y
-            downTime = SystemClock.uptimeMillis()
+            begin(x, y, false)
             held = state
             send(MotionEvent.ACTION_DOWN, state)
             send(MotionEvent.ACTION_BUTTON_PRESS, state, state)
             SystemClock.sleep(12)
         }
 
+        fun touch(x: Float, y: Float) {
+            begin(x, y, true)
+            send(MotionEvent.ACTION_DOWN, 0)
+        }
+
+        private fun begin(x: Float, y: Float, asFinger: Boolean) {
+            release()
+            coords[0].x = x
+            coords[0].y = y
+            downTime = SystemClock.uptimeMillis()
+            down = true
+            held = 0
+            finger = asFinger
+            props[0].toolType = if (asFinger) MotionEvent.TOOL_TYPE_FINGER else MotionEvent.TOOL_TYPE_MOUSE
+        }
+
         /** Paced like a hand: an app that only sees the end points of a drag treats it as a click. */
         fun move(x: Float, y: Float) {
-            if (held == 0) return
+            if (!down) return
             coords[0].x = x
             coords[0].y = y
             send(MotionEvent.ACTION_MOVE, held)
             SystemClock.sleep(12)
         }
 
+        /**
+         * At [ms] after the touch began: waits for that moment and stamps the event with
+         * it, so an app measuring the finger's speed for a fling sees the real one.
+         */
+        fun move(x: Float, y: Float, ms: Long) {
+            if (!down) return
+            val at = downTime + ms
+            val wait = at - SystemClock.uptimeMillis()
+            if (wait > 0) SystemClock.sleep(wait)
+            coords[0].x = x
+            coords[0].y = y
+            send(MotionEvent.ACTION_MOVE, held, time = at)
+        }
+
         fun release() {
-            if (held == 0) return
-            send(MotionEvent.ACTION_BUTTON_RELEASE, 0, held)
+            if (!down) return
+            if (held != 0) send(MotionEvent.ACTION_BUTTON_RELEASE, 0, held)
             send(MotionEvent.ACTION_UP, 0)
+            down = false
             held = 0
         }
 
-        private fun send(action: Int, buttons: Int, actionButton: Int = 0) {
+        private fun send(action: Int, buttons: Int, actionButton: Int = 0, time: Long = SystemClock.uptimeMillis()) {
             // Device 0, as scrcpy does for pointers; the virtual keyboard id (-1) is refused here.
-            val ev = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1, props, coords, 0, buttons,
-                1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0)
+            val source = if (finger) InputDevice.SOURCE_TOUCHSCREEN else InputDevice.SOURCE_MOUSE
+            val ev = MotionEvent.obtain(downTime, time, action, 1, props, coords, 0, buttons,
+                1f, 1f, 0, 0, source, 0)
             if (actionButton != 0) setActionButton.invoke(ev, actionButton)
             inject.invoke(im, ev, 0)
             ev.recycle()

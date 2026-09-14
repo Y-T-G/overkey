@@ -46,7 +46,8 @@ know do what you expect:
   holds Ctrl, as in Termux. Any volume key can be bound to a modifier, and the volume stays put
   while a bound key is at work.
 - **Mouse in aim mode.** Tap for a click, drag for a mouse drag (which selects text in a browser
-  instead of scrolling), hold for a right click.
+  instead of scrolling), hold for a right click. Double-tap and drag to scroll with a finger
+  instead, at your own speed, so a flick still flings.
 - **Pinned mode.** Bring the bar up with no keyboard, for <kbd>Ctrl</kbd> + <kbd>Z</kbd> on a
   screen with no text field.
 - **Yours to theme.** The bar takes its colours from your wallpaper by default, or from eleven

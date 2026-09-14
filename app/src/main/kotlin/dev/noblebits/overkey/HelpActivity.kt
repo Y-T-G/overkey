@@ -72,6 +72,8 @@ class HelpActivity : Activity() {
             Tip(null, "The screen dims and takes one gesture, sent as a mouse through the helper."),
             Tip("Tap", "a click there, which gives an image in a browser the focus that Ctrl+C needs."),
             Tip("Drag", "a mouse drag, replayed when you lift. In a browser it selects text instead of scrolling."),
+            Tip("Double-tap and drag", "a finger swipe instead, replayed at your speed. It scrolls and flings, for bringing the target on screen."),
+            Tip("Double-tap", "a double click, which selects a word in a browser."),
             Tip("Hold", "a menu: Right click, Select text, Copy image."),
             Tip("Select text", "lifts the text under your finger into a panel where you can select part of it and copy."),
             Tip("Copy image", "puts the picture under your finger on the clipboard as it appears on screen."),

@@ -192,6 +192,18 @@ class InjectorClient(private val context: Context) {
         write(sb.append("u\n").toString())
     }
 
+    /**
+     * A finger's swipe along [path], screen x,y pairs, each point at [times] ms after the
+     * first. Sent whole; the injector replays the moves at those times, so a quick swipe
+     * flings and a slow one scrolls.
+     */
+    fun swipe(path: IntArray, times: IntArray) {
+        if (path.size < 4) return
+        val sb = StringBuilder("f ${path[0]} ${path[1]}\n")
+        for (i in 2 until path.size step 2) sb.append("t ${path[i]} ${path[i + 1]} ${times[i / 2]}\n")
+        write(sb.append("u\n").toString())
+    }
+
     private fun write(line: String) {
         handler.post {
             val o = out ?: (if (connect()) out!! else return@post)

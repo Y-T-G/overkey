@@ -9,7 +9,7 @@ Setting up.
 The bar is an overlay, so it needs "Display over other apps". Delivering keys needs a small helper started once per boot, in one of three ways: Shizuku, which needs no root and no PC after the first setup; one adb command from a PC; or root. The settings screen walks through each and says whether the helper is running. There is no accessibility service.
 
 Copy anything.
-In aim mode the screen takes one gesture, sent as a mouse. Tap for a click, drag for a mouse drag, which selects text in a browser instead of scrolling. Hold for a menu: a right click, Select text, which lifts the text under your finger into a panel where you can select part of it and copy, or Copy image, which puts the picture under your finger on the clipboard as it appears on screen. Both work where the app offers no copy at all, a chat message or a photo in it.
+In aim mode the screen takes one gesture, sent as a mouse. Tap for a click, drag for a mouse drag, which selects text in a browser instead of scrolling. Double-tap and drag to scroll with a finger instead, at your own speed, so a flick still flings. Hold for a menu: a right click, Select text, which lifts the text under your finger into a panel where you can select part of it and copy, or Copy image, which puts the picture under your finger on the clipboard as it appears on screen. Both work where the app offers no copy at all, a chat message or a photo in it.
 
 Share to clipboard.
 Overkey appears in any app's share sheet. Share text, a picture or a file and it goes on the clipboard, so the next Ctrl+V pastes it in an app that offers no copy of its own.
