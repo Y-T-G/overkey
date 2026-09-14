@@ -119,6 +119,8 @@ jobs:
       - name: Read the tag's own message
         id: notes
         run: |
+          # checkout peels the pushed tag to its commit; fetch the tag object itself back.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
           kind=$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(objecttype)')
           if [ "$kind" = "tag" ]; then
             body=$(git for-each-ref "refs/tags/${GITHUB_REF_NAME}" --format='%(contents)')
