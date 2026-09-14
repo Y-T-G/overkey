@@ -33,8 +33,14 @@ android {
     defaultConfig {
         minSdk = 30 // WindowMetrics and WindowInsets.Type are API 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
+    }
+
+    // AGP otherwise appends an encrypted list of dependencies to the APK signing block. Only Play
+    // can read it, and F-Droid refuses an APK that carries it, so reproducible builds need it gone.
+    dependenciesInfo {
+        includeInApk = false
     }
 
     signingConfigs {

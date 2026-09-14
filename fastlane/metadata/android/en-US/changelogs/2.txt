@@ -1,0 +1,1 @@
+Same app as 1.0.0. The APK no longer carries the Play dependency metadata block, so F-Droid can build it reproducibly and ship it with the same signature as the GitHub release.
